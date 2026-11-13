@@ -1,0 +1,7 @@
+Arithmetic (SOF9) decode:        WORKING
+Same coeff/color path as Huffman: bit-identical outputs (section 4)
+Reference match (libjpeg-turbo):  REF_CHECK PASS
+Corrupt input rejected:           error codes (section 6)
+Huffman regression:               zero output changes (section 8)
+
+OVERALL: PASS

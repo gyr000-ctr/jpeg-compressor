@@ -48,7 +48,8 @@ namespace jpgd
 		JPGD_NOT_JPEG, JPGD_UNSUPPORTED_MARKER, JPGD_BAD_DQT_LENGTH, JPGD_TOO_MANY_BLOCKS,
 		JPGD_UNDEFINED_QUANT_TABLE, JPGD_UNDEFINED_HUFF_TABLE, JPGD_NOT_SINGLE_SCAN, JPGD_UNSUPPORTED_COLORSPACE,
 		JPGD_UNSUPPORTED_SAMP_FACTORS, JPGD_DECODE_ERROR, JPGD_BAD_RESTART_MARKER,
-		JPGD_BAD_SOS_SPECTRAL, JPGD_BAD_SOS_SUCCESSIVE, JPGD_STREAM_READ, JPGD_NOTENOUGHMEM, JPGD_TOO_MANY_SCANS
+		JPGD_BAD_SOS_SPECTRAL, JPGD_BAD_SOS_SUCCESSIVE, JPGD_STREAM_READ, JPGD_NOTENOUGHMEM, JPGD_TOO_MANY_SCANS,
+		JPGD_BAD_DAC_MARKER, JPGD_BAD_ARITH_CODE
 	};
 
 	// Input stream interface.
@@ -116,6 +117,13 @@ namespace jpgd
 	{
 		JPGD_IN_BUF_SIZE = 8192, JPGD_MAX_BLOCKS_PER_MCU = 10, JPGD_MAX_HUFF_TABLES = 8, JPGD_MAX_QUANT_TABLES = 4,
 		JPGD_MAX_COMPONENTS = 4, JPGD_MAX_COMPS_IN_SCAN = 4, JPGD_MAX_BLOCKS_PER_ROW = 16384, JPGD_MAX_HEIGHT = 32768, JPGD_MAX_WIDTH = 32768
+	};
+
+	enum
+	{
+		// Arithmetic coding (SOF9) support: T.81 allows up to 4 DC and 4 AC conditioning tables.
+		// Statistics areas need at least 49 bins for DC and 245 bins for AC coding (T.81 F.1.4.4.1.3/F.1.4.4.2); rounded up like the IJG code.
+		JPGD_MAX_ARITH_TABLES = 4, JPGD_ARITH_DC_STAT_BINS = 64, JPGD_ARITH_AC_STAT_BINS = 256
 	};
 
 	typedef int16 jpgd_quant_t;
@@ -201,6 +209,20 @@ namespace jpgd
 		jpeg_decoder_stream* m_pStream;
 
 		int m_progressive_flag;
+		bool m_arith_flag;                              // true if the frame uses arithmetic coding (SOF9)
+
+		// Arithmetic decoder state (T.81 Annex D decoding procedures, sequential mode).
+		uint m_arith_c;                                 // C register: base of coding interval + input bit buffer
+		uint m_arith_a;                                 // A register: normalized size of coding interval
+		int m_arith_ct;                                 // bit shift counter (-16 init, 0..7 running)
+		bool m_arith_marker_flag;                       // set once a marker is hit in the entropy coded data
+		uint8 m_arith_fixed_bin;                        // statistics bin for the fixed 0.5 probability estimate
+		uint8* m_arith_dc_stats[JPGD_MAX_ARITH_TABLES]; // DC statistics areas, 1 byte per bin
+		uint8* m_arith_ac_stats[JPGD_MAX_ARITH_TABLES]; // AC statistics areas, 1 byte per bin
+		uint8 m_arith_dc_context[JPGD_MAX_COMPONENTS];  // per component DC conditioning category
+		int m_arith_dc_L[JPGD_MAX_ARITH_TABLES];        // DC conditioning bounds from DAC (defaults 0/1)
+		int m_arith_dc_U[JPGD_MAX_ARITH_TABLES];
+		int m_arith_ac_K[JPGD_MAX_ARITH_TABLES];        // AC conditioning Kx from DAC (default 5)
 
 		uint8 m_huff_ac[JPGD_MAX_HUFF_TABLES];
 		uint8* m_huff_num[JPGD_MAX_HUFF_TABLES];      // pointer to number of Huffman codes per bit size
@@ -283,6 +305,7 @@ namespace jpgd
 		void word_clear(void* p, uint16 c, uint n);
 		void prep_in_buffer();
 		void read_dht_marker();
+		void read_dac_marker();
 		void read_dqt_marker();
 		void read_sof_marker();
 		void skip_variable_marker();
@@ -330,6 +353,15 @@ namespace jpgd
 		inline uint get_bits_no_markers(int numbits);
 		inline int huff_decode(huff_tables* pH);
 		inline int huff_decode(huff_tables* pH, int& extrabits);
+
+		// Arithmetic entropy decoding (T.81 Annex D). These plug into the same sequential
+		// decode_next_row() MCU loop as the Huffman path - only the source of symbols differs.
+		inline int arith_get_byte();
+		inline int arith_decode_bit(uint8* st);
+		void arith_init_scan();
+		void arith_restart();
+		int arith_decode_dc(int component_id);
+		int arith_decode_ac_block(jpgd_block_coeff_t* p, const jpgd_quant_t* q, int component_id, int prev_num_set);
 
 		// Clamps a value between 0-255.
 		static inline uint8 clamp(int i)

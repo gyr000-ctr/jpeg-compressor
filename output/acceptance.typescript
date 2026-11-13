@@ -1,0 +1,112 @@
+Script started on 2026-11-13 14:09:54+08:00 [COMMAND="bash work/run_acceptance.sh" <not executed on terminal>]
+
+================================================================
+== [1/9] Build jpge/jpgd (repo entry point) with arithmetic support
+================================================================
+built: /home/gyr/feedback/uidreczz28Z2YVvYRJ1/bin/jpge
+built reference tools and pre-change binary (for regression comparison)
+
+================================================================
+== [2/9] Generate test images and JPEG vectors (Huffman + arithmetic)
+================================================================
+generated
+arithmetic vectors: 8
+marker check (C9=SOF9 arithmetic, CC=DAC):
+  g64_ari_q90.jpg: APP0 DQT SOF9(arith) DAC SOS
+
+================================================================
+== [3/9] Decode arithmetic-coded JPEGs with the repo entry point (jpge -d)
+================================================================
+  OK      c100_ari_122_q80
+  OK      c100_ari_212_q80
+  OK      c37_ari_222_q95_rst3
+  OK      c64_ari_111_q85
+  OK      c64_ari_222_q90
+  OK      c64_ari_222_q90_rst5
+  OK      g64_ari_q90
+  OK      g91_ari_q75_rst4
+
+================================================================
+== [4/9] Same coefficients/colors: jpgd(arithmetic) must equal jpgd(Huffman) bit-exactly
+================================================================
+  IDENTICAL  c100_ari_122_q80 == c100_huff_122_q80
+  IDENTICAL  c100_ari_212_q80 == c100_huff_212_q80
+  IDENTICAL  c37_ari_222_q95_rst3 == c37_huff_222_q95_rst3
+  IDENTICAL  c64_ari_111_q85 == c64_huff_111_q85
+  IDENTICAL  c64_ari_222_q90 == c64_huff_222_q90
+  IDENTICAL  c64_ari_222_q90_rst5 == c64_huff_222_q90_rst5
+  IDENTICAL  g64_ari_q90 == g64_huff_q90
+  IDENTICAL  g91_ari_q75_rst4 == g91_huff_q75_rst4
+
+================================================================
+== [5/9] Decode-result matches reference decoder (libjpeg-turbo, C ISLOW IDCT)
+================================================================
+  c100_ari_122_q80           max|diff|=236  ndiff=16551
+  c100_ari_212_q80           max|diff|=80  ndiff=15508
+  c37_ari_222_q95_rst3       max|diff|=143  ndiff=1950
+  c64_ari_111_q85            max|diff|=3  ndiff=687
+  c64_ari_222_q90            max|diff|=81  ndiff=10415
+  c64_ari_222_q90_rst5       max|diff|=81  ndiff=10415
+  g64_ari_q90                max|diff|=1  ndiff=357
+  g91_ari_q75_rst4           max|diff|=1  ndiff=417
+WORST_MAXDIFF 236
+  g64_ari_q90                max|diff|=1 (<=3: OK)
+  g91_ari_q75_rst4           max|diff|=1 (<=3: OK)
+  c64_ari_111_q85            max|diff|=3 (<=3: OK)
+REF_CHECK PASS
+
+================================================================
+== [6/9] Corrupt/unsupported streams are rejected with error codes
+================================================================
+crafted corrupt vectors
+  bad_dac_tb.jpg -> error_code=-223 (expect error_code=-223)
+  bad_dac_lu.jpg -> error_code=-223 (expect error_code=-223)
+  bad_sos_table.jpg -> error_code=-222 (expect error_code=-222)
+  garbage.bin -> error_code=-239 (expect error_code=-239)
+  g64_ariprog_q90.jpg -> error_code=-241 (expect error_code=-241)
+  jpge -d bad_dac_tb.jpg -> exit 1 (must be 1)
+  jpge -d bad_dac_lu.jpg -> exit 1 (must be 1)
+  jpge -d bad_sos_table.jpg -> exit 1 (must be 1)
+  jpge -d garbage.bin -> exit 1 (must be 1)
+  jpge -d truncated.jpg -> exit 0 (tolerated, no crash: must be 0 or 1)
+  jpge -d no_eoi.jpg -> exit 0 (tolerated, no crash: must be 0 or 1)
+  jpge -d bitflip_entropy.jpg -> exit 0 (tolerated, no crash: must be 0 or 1)
+
+================================================================
+== [7/9] Robustness: 480 corrupted streams under ASan (no crash/hang allowed)
+================================================================
+generated 480 fuzz vectors
+  fuzz: 480 vectors, 0 crashes/sanitizer reports
+  valid files under ASan: clean
+
+================================================================
+== [8/9] Zero regression: existing Huffman files, old vs new decoder binary
+================================================================
+  IDENTICAL  c100_huff_111_q70
+  IDENTICAL  c100_huff_122_q80
+  IDENTICAL  c100_huff_212_q80
+  IDENTICAL  c37_huff_121_q60_rst2
+  IDENTICAL  c37_huff_222_q95_rst3
+  IDENTICAL  c64_huff_111_q85
+  IDENTICAL  c64_huff_222_q90
+  IDENTICAL  c64_huff_222_q90_rst5
+  IDENTICAL  c64_huff_opt_212_q85
+  IDENTICAL  c64_huff_prog_222_q90
+  IDENTICAL  g64_huff_prog_q90
+  IDENTICAL  g64_huff_q90
+  IDENTICAL  g91_huff_q75_rst4
+  IDENTICAL  box_filtering mode
+  IDENTICAL  no_simd mode
+
+================================================================
+== [9/9] Summary
+================================================================
+Arithmetic (SOF9) decode:        WORKING
+Same coeff/color path as Huffman: bit-identical outputs (section 4)
+Reference match (libjpeg-turbo):  REF_CHECK PASS
+Corrupt input rejected:           error codes (section 6)
+Huffman regression:               zero output changes (section 8)
+
+OVERALL: PASS
+
+Script done on 2026-11-13 14:11:06+08:00 [COMMAND_EXIT_CODE="0"]

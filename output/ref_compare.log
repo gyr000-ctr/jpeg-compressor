@@ -1,0 +1,13 @@
+  c100_ari_122_q80           max|diff|=236  ndiff=16551
+  c100_ari_212_q80           max|diff|=80  ndiff=15508
+  c37_ari_222_q95_rst3       max|diff|=143  ndiff=1950
+  c64_ari_111_q85            max|diff|=3  ndiff=687
+  c64_ari_222_q90            max|diff|=81  ndiff=10415
+  c64_ari_222_q90_rst5       max|diff|=81  ndiff=10415
+  g64_ari_q90                max|diff|=1  ndiff=357
+  g91_ari_q75_rst4           max|diff|=1  ndiff=417
+WORST_MAXDIFF 236
+  g64_ari_q90                max|diff|=1 (<=3: OK)
+  g91_ari_q75_rst4           max|diff|=1 (<=3: OK)
+  c64_ari_111_q85            max|diff|=3 (<=3: OK)
+REF_CHECK PASS

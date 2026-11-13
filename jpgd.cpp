@@ -1,6 +1,8 @@
 // jpgd.cpp - C++ class for JPEG decompression. Written by Richard Geldreich <richgel99@gmail.com> between 1994-2020.
 // Supports progressive and baseline sequential JPEG image files, and the most common chroma subsampling factors: Y, H1V1, H2V1, H1V2, and H2V2.
 // Supports box and linear chroma upsampling.
+// Supports Huffman and arithmetic (sequential, SOF9) entropy coding. Arithmetic coded streams share the exact same
+// coefficient, dequantization, IDCT, upsampling and colorspace conversion paths as the Huffman decoder.
 //
 // Released under two licenses. You are free to choose which license you want:
 // License 1: 
@@ -62,6 +64,130 @@ namespace jpgd {
 
 	// DCT coefficients are stored in this sequence.
 	static int g_ZAG[64] = { 0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63 };
+
+	// Probability estimation state machine for arithmetic decoding: Table D.2 in
+	// Recommendation ITU-T T.81 (1992) | ISO/IEC 10918-1:1994 (same data as Table 24 of T.82).
+	// Each entry packs: Qe value (bits 16-31), Next_Index_MPS (bits 8-15, with Switch_MPS in bit 7), Next_Index_LPS (bits 0-7).
+#define JPGD_ARITH_TAB_V(qe, nlps, nmps, swtch) (((uint)(qe) << 16) | ((uint)(nmps) << 8) | ((uint)(swtch) << 7) | (uint)(nlps))
+	static const uint g_arith_qe_tab[113 + 1] =
+	{
+		// Qe_Value, Next_Index_LPS, Next_Index_MPS, Switch_MPS
+		JPGD_ARITH_TAB_V(0x5a1d,   1,   1, 1),
+		JPGD_ARITH_TAB_V(0x2586,  14,   2, 0),
+		JPGD_ARITH_TAB_V(0x1114,  16,   3, 0),
+		JPGD_ARITH_TAB_V(0x080b,  18,   4, 0),
+		JPGD_ARITH_TAB_V(0x03d8,  20,   5, 0),
+		JPGD_ARITH_TAB_V(0x01da,  23,   6, 0),
+		JPGD_ARITH_TAB_V(0x00e5,  25,   7, 0),
+		JPGD_ARITH_TAB_V(0x006f,  28,   8, 0),
+		JPGD_ARITH_TAB_V(0x0036,  30,   9, 0),
+		JPGD_ARITH_TAB_V(0x001a,  33,  10, 0),
+		JPGD_ARITH_TAB_V(0x000d,  35,  11, 0),
+		JPGD_ARITH_TAB_V(0x0006,   9,  12, 0),
+		JPGD_ARITH_TAB_V(0x0003,  10,  13, 0),
+		JPGD_ARITH_TAB_V(0x0001,  12,  13, 0),
+		JPGD_ARITH_TAB_V(0x5a7f,  15,  15, 1),
+		JPGD_ARITH_TAB_V(0x3f25,  36,  16, 0),
+		JPGD_ARITH_TAB_V(0x2cf2,  38,  17, 0),
+		JPGD_ARITH_TAB_V(0x207c,  39,  18, 0),
+		JPGD_ARITH_TAB_V(0x17b9,  40,  19, 0),
+		JPGD_ARITH_TAB_V(0x1182,  42,  20, 0),
+		JPGD_ARITH_TAB_V(0x0cef,  43,  21, 0),
+		JPGD_ARITH_TAB_V(0x09a1,  45,  22, 0),
+		JPGD_ARITH_TAB_V(0x072f,  46,  23, 0),
+		JPGD_ARITH_TAB_V(0x055c,  48,  24, 0),
+		JPGD_ARITH_TAB_V(0x0406,  49,  25, 0),
+		JPGD_ARITH_TAB_V(0x0303,  51,  26, 0),
+		JPGD_ARITH_TAB_V(0x0240,  52,  27, 0),
+		JPGD_ARITH_TAB_V(0x01b1,  54,  28, 0),
+		JPGD_ARITH_TAB_V(0x0144,  56,  29, 0),
+		JPGD_ARITH_TAB_V(0x00f5,  57,  30, 0),
+		JPGD_ARITH_TAB_V(0x00b7,  59,  31, 0),
+		JPGD_ARITH_TAB_V(0x008a,  60,  32, 0),
+		JPGD_ARITH_TAB_V(0x0068,  62,  33, 0),
+		JPGD_ARITH_TAB_V(0x004e,  63,  34, 0),
+		JPGD_ARITH_TAB_V(0x003b,  32,  35, 0),
+		JPGD_ARITH_TAB_V(0x002c,  33,   9, 0),
+		JPGD_ARITH_TAB_V(0x5ae1,  37,  37, 1),
+		JPGD_ARITH_TAB_V(0x484c,  64,  38, 0),
+		JPGD_ARITH_TAB_V(0x3a0d,  65,  39, 0),
+		JPGD_ARITH_TAB_V(0x2ef1,  67,  40, 0),
+		JPGD_ARITH_TAB_V(0x261f,  68,  41, 0),
+		JPGD_ARITH_TAB_V(0x1f33,  69,  42, 0),
+		JPGD_ARITH_TAB_V(0x19a8,  70,  43, 0),
+		JPGD_ARITH_TAB_V(0x1518,  72,  44, 0),
+		JPGD_ARITH_TAB_V(0x1177,  73,  45, 0),
+		JPGD_ARITH_TAB_V(0x0e74,  74,  46, 0),
+		JPGD_ARITH_TAB_V(0x0bfb,  75,  47, 0),
+		JPGD_ARITH_TAB_V(0x09f8,  77,  48, 0),
+		JPGD_ARITH_TAB_V(0x0861,  78,  49, 0),
+		JPGD_ARITH_TAB_V(0x0706,  79,  50, 0),
+		JPGD_ARITH_TAB_V(0x05cd,  48,  51, 0),
+		JPGD_ARITH_TAB_V(0x04de,  50,  52, 0),
+		JPGD_ARITH_TAB_V(0x040f,  50,  53, 0),
+		JPGD_ARITH_TAB_V(0x0363,  51,  54, 0),
+		JPGD_ARITH_TAB_V(0x02d4,  52,  55, 0),
+		JPGD_ARITH_TAB_V(0x025c,  53,  56, 0),
+		JPGD_ARITH_TAB_V(0x01f8,  54,  57, 0),
+		JPGD_ARITH_TAB_V(0x01a4,  55,  58, 0),
+		JPGD_ARITH_TAB_V(0x0160,  56,  59, 0),
+		JPGD_ARITH_TAB_V(0x0125,  57,  60, 0),
+		JPGD_ARITH_TAB_V(0x00f6,  58,  61, 0),
+		JPGD_ARITH_TAB_V(0x00cb,  59,  62, 0),
+		JPGD_ARITH_TAB_V(0x00ab,  61,  63, 0),
+		JPGD_ARITH_TAB_V(0x008f,  61,  32, 0),
+		JPGD_ARITH_TAB_V(0x5b12,  65,  65, 1),
+		JPGD_ARITH_TAB_V(0x4d04,  80,  66, 0),
+		JPGD_ARITH_TAB_V(0x412c,  81,  67, 0),
+		JPGD_ARITH_TAB_V(0x37d8,  82,  68, 0),
+		JPGD_ARITH_TAB_V(0x2fe8,  83,  69, 0),
+		JPGD_ARITH_TAB_V(0x293c,  84,  70, 0),
+		JPGD_ARITH_TAB_V(0x2379,  86,  71, 0),
+		JPGD_ARITH_TAB_V(0x1edf,  87,  72, 0),
+		JPGD_ARITH_TAB_V(0x1aa9,  87,  73, 0),
+		JPGD_ARITH_TAB_V(0x174e,  72,  74, 0),
+		JPGD_ARITH_TAB_V(0x1424,  72,  75, 0),
+		JPGD_ARITH_TAB_V(0x119c,  74,  76, 0),
+		JPGD_ARITH_TAB_V(0x0f6b,  74,  77, 0),
+		JPGD_ARITH_TAB_V(0x0d51,  75,  78, 0),
+		JPGD_ARITH_TAB_V(0x0bb6,  77,  79, 0),
+		JPGD_ARITH_TAB_V(0x0a40,  77,  48, 0),
+		JPGD_ARITH_TAB_V(0x5832,  80,  81, 1),
+		JPGD_ARITH_TAB_V(0x4d1c,  88,  82, 0),
+		JPGD_ARITH_TAB_V(0x438e,  89,  83, 0),
+		JPGD_ARITH_TAB_V(0x3bdd,  90,  84, 0),
+		JPGD_ARITH_TAB_V(0x34ee,  91,  85, 0),
+		JPGD_ARITH_TAB_V(0x2eae,  92,  86, 0),
+		JPGD_ARITH_TAB_V(0x299a,  93,  87, 0),
+		JPGD_ARITH_TAB_V(0x2516,  86,  71, 0),
+		JPGD_ARITH_TAB_V(0x5570,  88,  89, 1),
+		JPGD_ARITH_TAB_V(0x4ca9,  95,  90, 0),
+		JPGD_ARITH_TAB_V(0x44d9,  96,  91, 0),
+		JPGD_ARITH_TAB_V(0x3e22,  97,  92, 0),
+		JPGD_ARITH_TAB_V(0x3824,  99,  93, 0),
+		JPGD_ARITH_TAB_V(0x32b4,  99,  94, 0),
+		JPGD_ARITH_TAB_V(0x2e17,  93,  86, 0),
+		JPGD_ARITH_TAB_V(0x56a8,  95,  96, 1),
+		JPGD_ARITH_TAB_V(0x4f46, 101,  97, 0),
+		JPGD_ARITH_TAB_V(0x47e5, 102,  98, 0),
+		JPGD_ARITH_TAB_V(0x41cf, 103,  99, 0),
+		JPGD_ARITH_TAB_V(0x3c3d, 104, 100, 0),
+		JPGD_ARITH_TAB_V(0x375e,  99,  93, 0),
+		JPGD_ARITH_TAB_V(0x5231, 105, 102, 0),
+		JPGD_ARITH_TAB_V(0x4c0f, 106, 103, 0),
+		JPGD_ARITH_TAB_V(0x4639, 107, 104, 0),
+		JPGD_ARITH_TAB_V(0x415e, 103,  99, 0),
+		JPGD_ARITH_TAB_V(0x5627, 105, 106, 1),
+		JPGD_ARITH_TAB_V(0x50e7, 108, 107, 0),
+		JPGD_ARITH_TAB_V(0x4b85, 109, 103, 0),
+		JPGD_ARITH_TAB_V(0x5597, 110, 109, 0),
+		JPGD_ARITH_TAB_V(0x504f, 111, 107, 0),
+		JPGD_ARITH_TAB_V(0x5a10, 110, 111, 1),
+		JPGD_ARITH_TAB_V(0x5522, 112, 109, 0),
+		JPGD_ARITH_TAB_V(0x59eb, 112, 111, 1),
+		// This last entry is used for the fixed probability estimate of 0.5 (T.851 Section 10.3 Table 5).
+		JPGD_ARITH_TAB_V(0x5a1d, 113, 113, 0)
+	};
 
 	enum JPEG_MARKER
 	{
@@ -621,6 +747,283 @@ namespace jpgd {
 
 #define JPGD_HUFF_EXTEND(x, s) (((x) < s_extend_test[s & 15]) ? ((x) + s_extend_offset[s & 15]) : (x))
 
+	// Reads one byte of arithmetic coded data (T.81 D.1.6 unstuffed byte path).
+	// Handles 0xFF00 byte unstuffing. Unlike the Huffman path, hitting a marker here is legal:
+	// the marker is pushed back into the input buffer and zero data is supplied until decoding completes.
+	inline int jpeg_decoder::arith_get_byte()
+	{
+		if (m_arith_marker_flag)
+			return 0;
+
+		int data = get_char();
+
+		if (data == 0xFF)
+		{
+			int marker;
+			do
+			{
+				marker = get_char();
+			} while (marker == 0xFF); // swallow any fill bytes
+
+			if (marker == 0x00)
+				return 0xFF; // 0xFF00 is a stuffed data byte 0xFF
+
+			// Hit a real marker: leave it in the input buffer for process_markers(), supply zero data from now on.
+			stuff_char(static_cast<uint8>(marker));
+			stuff_char(0xFF);
+			m_arith_marker_flag = true;
+			return 0;
+		}
+
+		return data;
+	}
+
+	// The core arithmetic decoding routine (T.81 D.2.4/D.2.5/D.2.6). Returns a binary decision (0 or 1).
+	// st points to the 1-byte statistics bin for the context being coded: bit 7 is the MPS sense, bits 0-6 are the QE state index.
+	inline int jpeg_decoder::arith_decode_bit(uint8* st)
+	{
+		// Renormalization & data input per T.81 D.2.6
+		while (m_arith_a < 0x8000)
+		{
+			if (--m_arith_ct < 0)
+			{
+				// Need to fetch another data byte
+				const int data = arith_get_byte();
+				m_arith_c = (m_arith_c << 8) | (uint)data;
+				if ((m_arith_ct += 8) < 0)
+				{
+					// Need more initial bytes
+					if (++m_arith_ct == 0)
+						// Got 2 initial bytes -> re-init A and exit loop
+						m_arith_a = 0x8000; // => m_arith_a = 0x10000 after loop exit
+				}
+			}
+			m_arith_a <<= 1;
+		}
+
+		// Fetch Qe and the probability estimation state machine transitions
+		const int sv = *st;
+		uint qe = g_arith_qe_tab[sv & 0x7F];
+		const uint nl = qe & 0xFF; qe >>= 8; // Next_Index_LPS + Switch_MPS
+		const uint nm = qe & 0xFF; qe >>= 8; // Next_Index_MPS
+
+		// Decode & estimation procedures per T.81 D.2.4 & D.2.5
+		int sv_out = sv;
+		uint temp = m_arith_a - qe;
+		m_arith_a = temp;
+		temp <<= m_arith_ct;
+
+		if (m_arith_c >= temp)
+		{
+			m_arith_c -= temp;
+			// Conditional LPS (less probable symbol) exchange
+			if (m_arith_a < qe)
+			{
+				m_arith_a = qe;
+				*st = static_cast<uint8>((sv & 0x80) ^ nm); // Estimate_after_MPS
+			}
+			else
+			{
+				m_arith_a = qe;
+				*st = static_cast<uint8>((sv & 0x80) ^ nl); // Estimate_after_LPS
+				sv_out ^= 0x80; // Exchange LPS/MPS
+			}
+		}
+		else if (m_arith_a < 0x8000)
+		{
+			// Conditional MPS (more probable symbol) exchange
+			if (m_arith_a < qe)
+			{
+				*st = static_cast<uint8>((sv & 0x80) ^ nl); // Estimate_after_LPS
+				sv_out ^= 0x80; // Exchange LPS/MPS
+			}
+			else
+			{
+				*st = static_cast<uint8>((sv & 0x80) ^ nm); // Estimate_after_MPS
+			}
+		}
+
+		return sv_out >> 7;
+	}
+
+	// (Re)initializes the arithmetic decoder for a new scan. Called from init_scan() for arithmetic coded frames.
+	void jpeg_decoder::arith_init_scan()
+	{
+		// Allocate & clear the statistics areas for the tables used in this scan.
+		for (int i = 0; i < m_comps_in_scan; i++)
+		{
+			const int component_id = m_comp_list[i];
+			const int dc_tbl = m_comp_dc_tab[component_id];
+			const int ac_tbl = m_comp_ac_tab[component_id] - (JPGD_MAX_HUFF_TABLES >> 1);
+
+			if ((dc_tbl >= JPGD_MAX_ARITH_TABLES) || (ac_tbl >= JPGD_MAX_ARITH_TABLES))
+				stop_decoding(JPGD_BAD_ARITH_CODE);
+
+			if (!m_arith_dc_stats[dc_tbl])
+				m_arith_dc_stats[dc_tbl] = (uint8*)alloc(JPGD_ARITH_DC_STAT_BINS);
+			memset(m_arith_dc_stats[dc_tbl], 0, JPGD_ARITH_DC_STAT_BINS);
+
+			if (!m_arith_ac_stats[ac_tbl])
+				m_arith_ac_stats[ac_tbl] = (uint8*)alloc(JPGD_ARITH_AC_STAT_BINS);
+			memset(m_arith_ac_stats[ac_tbl], 0, JPGD_ARITH_AC_STAT_BINS);
+
+			m_arith_dc_context[component_id] = 0;
+		}
+
+		// Initialize arithmetic decoding variables
+		m_arith_c = 0;
+		m_arith_a = 0;
+		m_arith_ct = -16; // force reading 2 initial bytes to fill C
+		m_arith_marker_flag = false;
+	}
+
+	// Re-initializes the arithmetic decoder at a restart boundary. Called from process_restart().
+	void jpeg_decoder::arith_restart()
+	{
+		// Re-initialize the statistics areas for the tables used in this scan (T.81 E.1.4).
+		for (int i = 0; i < m_comps_in_scan; i++)
+		{
+			const int component_id = m_comp_list[i];
+			memset(m_arith_dc_stats[m_comp_dc_tab[component_id]], 0, JPGD_ARITH_DC_STAT_BINS);
+			memset(m_arith_ac_stats[m_comp_ac_tab[component_id] - (JPGD_MAX_HUFF_TABLES >> 1)], 0, JPGD_ARITH_AC_STAT_BINS);
+			m_arith_dc_context[component_id] = 0;
+		}
+
+		// Reset arithmetic decoding variables
+		m_arith_c = 0;
+		m_arith_a = 0;
+		m_arith_ct = -16;
+		m_arith_marker_flag = false;
+	}
+
+	// Decodes one DC coefficient difference (T.81 F.2.4.1 & F.1.4.4.1). Returns the signed difference value.
+	int jpeg_decoder::arith_decode_dc(int component_id)
+	{
+		const int tbl = m_comp_dc_tab[component_id];
+		uint8* const dc_stats = m_arith_dc_stats[tbl];
+
+		// Table F.4: Point to statistics bin S0 for DC coefficient coding
+		uint8* st = dc_stats + m_arith_dc_context[component_id];
+
+		int v = 0;
+
+		// Figure F.19: Decode_DC_DIFF
+		if (arith_decode_bit(st) == 0)
+			m_arith_dc_context[component_id] = 0;
+		else
+		{
+			// Figure F.21: Decoding nonzero value v
+			// Figure F.22: Decoding the sign of v
+			const int sign = arith_decode_bit(st + 1);
+			st += 2 + sign;
+
+			// Figure F.23: Decoding the magnitude category of v
+			int m = arith_decode_bit(st);
+			if (m)
+			{
+				st = dc_stats + 20; // Table F.4: X1 = 20
+				while (arith_decode_bit(st))
+				{
+					m <<= 1;
+					if (m == 0x8000)
+						stop_decoding(JPGD_BAD_ARITH_CODE); // magnitude overflow: corrupt stream
+					st++;
+				}
+			}
+
+			// Section F.1.4.4.1.2: Establish dc_context conditioning category
+			if (m < ((1 << m_arith_dc_L[tbl]) >> 1))
+				m_arith_dc_context[component_id] = 0;				// zero diff category
+			else if (m > ((1 << m_arith_dc_U[tbl]) >> 1))
+				m_arith_dc_context[component_id] = 12 + (sign * 4);	// large diff category
+			else
+				m_arith_dc_context[component_id] = 4 + (sign * 4);	// small diff category
+
+			v = m;
+			// Figure F.24: Decoding the magnitude bit pattern of v
+			st += 14;
+			while (m >>= 1)
+				if (arith_decode_bit(st))
+					v |= m;
+			v++;
+			if (sign)
+				v = -v;
+		}
+
+		return v;
+	}
+
+	// Decodes the AC coefficients of one block (T.81 F.2.4.2 & F.1.4.4.2), dequantizing them into p in natural order.
+	// prev_num_set/zeroing semantics are identical to the Huffman path in decode_next_row().
+	// Returns the index of the first undecoded coefficient (same meaning as k in the Huffman path).
+	int jpeg_decoder::arith_decode_ac_block(jpgd_block_coeff_t* p, const jpgd_quant_t* q, int component_id, int prev_num_set)
+	{
+		const int tbl = m_comp_ac_tab[component_id] - (JPGD_MAX_HUFF_TABLES >> 1);
+		uint8* const ac_stats = m_arith_ac_stats[tbl];
+		const int kx = m_arith_ac_K[tbl];
+
+		int k;
+
+		// Figure F.20: Decode_AC_coefficients
+		for (k = 1; k < 64; k++)
+		{
+			uint8* st = ac_stats + 3 * (k - 1);
+
+			if (arith_decode_bit(st))
+				break; // EOB flag
+
+			while (arith_decode_bit(st + 1) == 0)
+			{
+				// Coefficient k is zero - clear any stale value left in the MCU coefficient buffer.
+				if (k < prev_num_set)
+					p[g_ZAG[k]] = 0;
+
+				st += 3;
+				k++;
+				if (k > 63)
+					stop_decoding(JPGD_BAD_ARITH_CODE); // spectral overflow: corrupt stream
+			}
+
+			// Figure F.21: Decoding nonzero value v
+			// Figure F.22: Decoding the sign of v
+			const int sign = arith_decode_bit(&m_arith_fixed_bin);
+			st += 2;
+
+			// Figure F.23: Decoding the magnitude category of v
+			int m = arith_decode_bit(st);
+			if (m)
+			{
+				if (arith_decode_bit(st))
+				{
+					m <<= 1;
+					st = ac_stats + ((k <= kx) ? 189 : 217);
+					while (arith_decode_bit(st))
+					{
+						m <<= 1;
+						if (m == 0x8000)
+							stop_decoding(JPGD_BAD_ARITH_CODE); // magnitude overflow: corrupt stream
+						st++;
+					}
+				}
+			}
+
+			int v = m;
+			// Figure F.24: Decoding the magnitude bit pattern of v
+			st += 14;
+			while (m >>= 1)
+				if (arith_decode_bit(st))
+					v |= m;
+			v++;
+			if (sign)
+				v = -v;
+
+			p[g_ZAG[k]] = static_cast<jpgd_block_coeff_t>(v * q[k]);
+		}
+
+		return k;
+	}
+
+
 	// Unconditionally frees all allocated m_blocks.
 	void jpeg_decoder::free_all_blocks()
 	{
@@ -793,6 +1196,48 @@ namespace jpgd {
 			m_huff_ac[index] = (index & 0x10) != 0;
 			memcpy(m_huff_num[index], huff_num, 17);
 			memcpy(m_huff_val[index], huff_val, 256);
+		}
+	}
+
+	// Read a define arithmetic coding conditioning (DAC) marker.
+	void jpeg_decoder::read_dac_marker()
+	{
+		uint num_left = get_bits(16);
+
+		if ((num_left < 2) || (num_left & 1))
+			stop_decoding(JPGD_BAD_DAC_MARKER);
+
+		num_left -= 2;
+
+		while (num_left)
+		{
+			const int index = get_bits(8);
+			const int val = get_bits(8);
+			num_left -= 2;
+
+			const int tc = index >> 4;
+			const int tb = index & 15;
+
+			if ((tc > 1) || (tb >= JPGD_MAX_ARITH_TABLES))
+				stop_decoding(JPGD_BAD_DAC_MARKER);
+
+			if (tc == 0)
+			{
+				// DC conditioning: L in the low nibble, U in the high nibble
+				m_arith_dc_L[tb] = val & 15;
+				m_arith_dc_U[tb] = val >> 4;
+
+				if (m_arith_dc_L[tb] > m_arith_dc_U[tb])
+					stop_decoding(JPGD_BAD_DAC_MARKER);
+			}
+			else
+			{
+				// AC conditioning: Kx, valid range 1-63
+				if ((val < 1) || (val > 63))
+					stop_decoding(JPGD_BAD_DAC_MARKER);
+
+				m_arith_ac_K[tb] = val;
+			}
 		}
 	}
 
@@ -1048,10 +1493,9 @@ namespace jpgd {
 				read_dht_marker();
 				break;
 			}
-			// No arithmitic support - dumb patents!
 			case M_DAC:
 			{
-				stop_decoding(JPGD_NO_ARITHMITIC_SUPPORT);
+				read_dac_marker();
 				break;
 			}
 			case M_DQT:
@@ -1151,7 +1595,17 @@ namespace jpgd {
 			read_sof_marker();
 			break;
 		}
-		case M_SOF9:  /* Arithmitic coding */
+		case M_SOF9:  /* Extended sequential DCT, arithmetic coding */
+		{
+			m_arith_flag = true;
+			read_sof_marker();
+			break;
+		}
+		case M_SOF10: /* Progressive arithmetic coding */
+		case M_SOF11: /* Lossless arithmetic coding */
+		case M_SOF13: /* Differential sequential arithmetic coding */
+		case M_SOF14: /* Differential progressive arithmetic coding */
+		case M_SOF15: /* Differential lossless arithmetic coding */
 		{
 			stop_decoding(JPGD_NO_ARITHMITIC_SUPPORT);
 			break;
@@ -1191,7 +1645,24 @@ namespace jpgd {
 		m_image_x_size = m_image_y_size = 0;
 		m_pStream = pStream;
 		m_progressive_flag = JPGD_FALSE;
-				
+
+		m_arith_flag = false;
+		m_arith_c = 0;
+		m_arith_a = 0;
+		m_arith_ct = -16;
+		m_arith_marker_flag = false;
+		m_arith_fixed_bin = 113; // fixed probability estimate of 0.5
+		memset(m_arith_dc_stats, 0, sizeof(m_arith_dc_stats));
+		memset(m_arith_ac_stats, 0, sizeof(m_arith_ac_stats));
+		memset(m_arith_dc_context, 0, sizeof(m_arith_dc_context));
+		for (int i = 0; i < JPGD_MAX_ARITH_TABLES; i++)
+		{
+			// Default conditioning parameters (T.81 F.1.4.4.1.2/G.1.3.2), used when no DAC marker is present.
+			m_arith_dc_L[i] = 0;
+			m_arith_dc_U[i] = 1;
+			m_arith_ac_K[i] = 5;
+		}
+		
 		memset(m_huff_ac, 0, sizeof(m_huff_ac));
 		memset(m_huff_num, 0, sizeof(m_huff_num));
 		memset(m_huff_val, 0, sizeof(m_huff_val));
@@ -1329,6 +1800,15 @@ namespace jpgd {
 		stuff_char((uint8)((m_bit_buf >> 24) & 0xFF));
 
 		m_bits_left = 16;
+
+		if (m_arith_flag)
+		{
+			// The arithmetic decoder pulls bytes straight from the input buffer, so
+			// don't consume any entropy coded data into the (unused) Huffman bit buffer.
+			m_bit_buf = 0;
+			return;
+		}
+
 		get_bits_no_markers(16);
 		get_bits_no_markers(16);
 	}
@@ -1437,25 +1917,49 @@ namespace jpgd {
 		// FIXME: Is this really necessary? get_bits_no_markers() never reads in markers!
 		//get_bits_no_markers(m_bits_left & 7);
 
-		// Let's scan a little bit to find the marker, but not _too_ far.
-		// 1536 is a "fudge factor" that determines how much to scan.
-		for (i = 1536; i > 0; i--)
-			if (get_char() == 0xFF)
-				break;
+		if (m_arith_flag)
+		{
+			// Arithmetic coded data may legitimately contain 0xFF00 stuffed bytes right up
+			// to the restart marker, so skip stuffed bytes and fill bytes while scanning.
+			for (i = 1536; i > 0; i--)
+			{
+				if (get_char() != 0xFF)
+					continue;
 
-		if (i == 0)
-			stop_decoding(JPGD_BAD_RESTART_MARKER);
+				do
+				{
+					c = get_char();
+				} while (c == 0xFF);
 
-		for (; i > 0; i--)
-			if ((c = get_char()) != 0xFF)
-				break;
+				if (c != 0x00)
+					break;
+			}
 
-		if (i == 0)
-			stop_decoding(JPGD_BAD_RESTART_MARKER);
+			if ((i == 0) || (c != (m_next_restart_num + M_RST0)))
+				stop_decoding(JPGD_BAD_RESTART_MARKER);
+		}
+		else
+		{
+			// Let's scan a little bit to find the marker, but not _too_ far.
+			// 1536 is a "fudge factor" that determines how much to scan.
+			for (i = 1536; i > 0; i--)
+				if (get_char() == 0xFF)
+					break;
 
-		// Is it the expected marker? If not, something bad happened.
-		if (c != (m_next_restart_num + M_RST0))
-			stop_decoding(JPGD_BAD_RESTART_MARKER);
+			if (i == 0)
+				stop_decoding(JPGD_BAD_RESTART_MARKER);
+
+			for (; i > 0; i--)
+				if ((c = get_char()) != 0xFF)
+					break;
+
+			if (i == 0)
+				stop_decoding(JPGD_BAD_RESTART_MARKER);
+
+			// Is it the expected marker? If not, something bad happened.
+			if (c != (m_next_restart_num + M_RST0))
+				stop_decoding(JPGD_BAD_RESTART_MARKER);
+		}
 
 		// Reset each component's DC prediction values.
 		memset(&m_last_dc_val, 0, m_comps_in_frame * sizeof(uint));
@@ -1465,6 +1969,13 @@ namespace jpgd {
 		m_restarts_left = m_restart_interval;
 
 		m_next_restart_num = (m_next_restart_num + 1) & 7;
+
+		if (m_arith_flag)
+		{
+			// Re-initialize the arithmetic decoder (statistics areas, registers).
+			arith_restart();
+			return;
+		}
 
 		// Get the bit buffer going again...
 
@@ -1494,24 +2005,45 @@ namespace jpgd {
 
 				jpgd_quant_t* q = m_quant[m_comp_quant[component_id]];
 
-				int r, s;
-				s = huff_decode(m_pHuff_tabs[m_comp_dc_tab[component_id]], r);
-				if (s >= 16)
-					stop_decoding(JPGD_DECODE_ERROR);
+				int s;
+				if (m_arith_flag)
+				{
+					// Arithmetic coding: decode the signed DC difference (T.81 F.2.4.1).
+					// The DC predictor is computed modulo 2^16.
+					s = arith_decode_dc(component_id);
+					s = static_cast<int16>((m_last_dc_val[component_id] + s) & 0xFFFF);
+				}
+				else
+				{
+					int r;
+					s = huff_decode(m_pHuff_tabs[m_comp_dc_tab[component_id]], r);
+					if (s >= 16)
+						stop_decoding(JPGD_DECODE_ERROR);
 
-				s = JPGD_HUFF_EXTEND(r, s);
+					s = JPGD_HUFF_EXTEND(r, s);
 
-				m_last_dc_val[component_id] = (s += m_last_dc_val[component_id]);
+					s += m_last_dc_val[component_id];
+				}
+
+				m_last_dc_val[component_id] = s;
 
 				p[0] = static_cast<jpgd_block_coeff_t>(s * q[0]);
 
 				int prev_num_set = m_mcu_block_max_zag[mcu_block];
 
-				huff_tables* pH = m_pHuff_tabs[m_comp_ac_tab[component_id]];
-
 				int k;
-				for (k = 1; k < 64; k++)
+				if (m_arith_flag)
 				{
+					// Arithmetic coding: decode + dequantize the AC coefficients (T.81 F.2.4.2).
+					k = arith_decode_ac_block(p, q, component_id, prev_num_set);
+				}
+				else
+				{
+					huff_tables* pH = m_pHuff_tabs[m_comp_ac_tab[component_id]];
+
+					int r;
+					for (k = 1; k < 64; k++)
+					{
 					int extra_bits;
 					s = huff_decode(pH, extra_bits);
 
@@ -1570,7 +2102,8 @@ namespace jpgd {
 						else
 							break;
 					}
-				}
+					} // for (k = 1; k < 64; k++)
+				} // else Huffman coded block
 
 				if (k < prev_num_set)
 				{
@@ -2540,7 +3073,10 @@ namespace jpgd {
 		if (!calc_mcu_block_order())
 			return JPGD_FALSE;
 
-		check_huff_tables();
+		if (m_arith_flag)
+			arith_init_scan();
+		else
+			check_huff_tables();
 
 		check_quant_tables();
 

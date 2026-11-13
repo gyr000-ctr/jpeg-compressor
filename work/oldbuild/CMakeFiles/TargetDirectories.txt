@@ -1,0 +1,7 @@
+/home/gyr/feedback/uidreczz28Z2YVvYRJ1/work/oldbuild/CMakeFiles/jpge.dir
+/home/gyr/feedback/uidreczz28Z2YVvYRJ1/work/oldbuild/CMakeFiles/edit_cache.dir
+/home/gyr/feedback/uidreczz28Z2YVvYRJ1/work/oldbuild/CMakeFiles/rebuild_cache.dir
+/home/gyr/feedback/uidreczz28Z2YVvYRJ1/work/oldbuild/CMakeFiles/list_install_components.dir
+/home/gyr/feedback/uidreczz28Z2YVvYRJ1/work/oldbuild/CMakeFiles/install.dir
+/home/gyr/feedback/uidreczz28Z2YVvYRJ1/work/oldbuild/CMakeFiles/install/local.dir
+/home/gyr/feedback/uidreczz28Z2YVvYRJ1/work/oldbuild/CMakeFiles/install/strip.dir
