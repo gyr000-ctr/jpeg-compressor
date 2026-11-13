@@ -27,6 +27,7 @@
 // #define JPGD_USE_SSE2 to 0 to completely disable SSE2 usage.
 //
 #include "jpgd.h"
+#include "jpgd_entropy.h"
 #include <string.h>
 #include <algorithm>
 #include <assert.h>
@@ -61,7 +62,8 @@ namespace jpgd {
 	static inline void jpgd_free(void* p) { free(p); }
 
 	// DCT coefficients are stored in this sequence.
-	static int g_ZAG[64] = { 0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63 };
+	// External linkage so the arithmetic entropy decoder reuses the same table.
+	extern const int g_ZAG[64] = { 0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63 };
 
 	enum JPEG_MARKER
 	{
@@ -362,7 +364,7 @@ namespace jpgd {
 	}
 
 	// Retrieve one character from the input stream.
-	inline uint jpeg_decoder::get_char()
+	uint jpeg_decoder::get_char()
 	{
 		// Any bytes remaining in buffer?
 		if (!m_in_buf_left)
@@ -389,7 +391,7 @@ namespace jpgd {
 	}
 
 	// Same as previous method, except can indicate if the character is a pad character or not.
-	inline uint jpeg_decoder::get_char(bool* pPadding_flag)
+	uint jpeg_decoder::get_char(bool* pPadding_flag)
 	{
 		if (!m_in_buf_left)
 		{
@@ -415,7 +417,7 @@ namespace jpgd {
 	}
 
 	// Inserts a previously retrieved character back into the input buffer.
-	inline void jpeg_decoder::stuff_char(uint8 q)
+	void jpeg_decoder::stuff_char(uint8 q)
 	{
 		// This could write before the input buffer, but we've placed another array there.
 		*(--m_pIn_buf_ofs) = q;
@@ -423,7 +425,7 @@ namespace jpgd {
 	}
 
 	// Retrieves one character from the input stream, but does not read past markers. Will continue to return 0xFF when a marker is encountered.
-	inline uint8 jpeg_decoder::get_octet()
+	uint8 jpeg_decoder::get_octet()
 	{
 		bool padding_flag;
 		int c = get_char(&padding_flag);
@@ -521,7 +523,7 @@ namespace jpgd {
 	}
 
 	// Decodes a Huffman encoded symbol.
-	inline int jpeg_decoder::huff_decode(huff_tables* pH)
+	int jpeg_decoder::huff_decode(huff_tables* pH)
 	{
 		if (!pH)
 			stop_decoding(JPGD_DECODE_ERROR);
@@ -556,7 +558,7 @@ namespace jpgd {
 	}
 
 	// Decodes a Huffman encoded symbol.
-	inline int jpeg_decoder::huff_decode(huff_tables* pH, int& extra_bits)
+	int jpeg_decoder::huff_decode(huff_tables* pH, int& extra_bits)
 	{
 		int symbol;
 
@@ -793,6 +795,59 @@ namespace jpgd {
 			m_huff_ac[index] = (index & 0x10) != 0;
 			memcpy(m_huff_num[index], huff_num, 17);
 			memcpy(m_huff_val[index], huff_val, 256);
+		}
+	}
+
+	// Read an arithmetic coding conditioning (DAC) marker (T.81 B.2.4.4).
+	// Each 2-byte parameter defines one conditioning table. The index byte
+	// packs class Tc in its high nibble and destination table Tb in its low
+	// nibble: 0x00..0x0F are DC tables (value nibbles L/U), 0x10..0x1F are AC
+	// tables (value K).
+	void jpeg_decoder::read_dac_marker()
+	{
+		const int NUM_SLOTS = JPGD_MAX_HUFF_TABLES >> 1;
+		uint num_left = get_bits(16);
+
+		if (num_left < 2)
+			stop_decoding(JPGD_BAD_DAC_MARKER);
+
+		num_left -= 2;
+
+		while (num_left)
+		{
+			if (num_left < 2)
+				stop_decoding(JPGD_BAD_DAC_MARKER);
+
+			const int index = get_bits(8);
+			const int val = get_bits(8);
+			num_left -= 2;
+
+			const int tc = (index >> 4) & 0x0F;
+			const int tb = index & 0x0F;
+
+			if ((tc > 1) || (tb >= NUM_SLOTS))
+				stop_decoding(JPGD_BAD_DAC_MARKER);
+
+			if (tc == 1)
+			{
+				// AC conditioning table: Kx must be in 1..63.
+				if ((val < 1) || (val > 63))
+					stop_decoding(JPGD_BAD_DAC_MARKER);
+
+				m_arith_ac_K[tb] = static_cast<uint8>(val);
+			}
+			else
+			{
+				// DC conditioning table: L <= U, both nibbles in 0..15.
+				const int L = val & 0x0F;
+				const int U = (val >> 4) & 0x0F;
+
+				if (L > U)
+					stop_decoding(JPGD_BAD_DAC_MARKER);
+
+				m_arith_dc_L[tb] = static_cast<uint8>(L);
+				m_arith_dc_U[tb] = static_cast<uint8>(U);
+			}
 		}
 	}
 
@@ -1048,10 +1103,10 @@ namespace jpgd {
 				read_dht_marker();
 				break;
 			}
-			// No arithmitic support - dumb patents!
+			// Arithmetic coding conditioning table.
 			case M_DAC:
 			{
-				stop_decoding(JPGD_NO_ARITHMITIC_SUPPORT);
+				read_dac_marker();
 				break;
 			}
 			case M_DQT:
@@ -1146,14 +1201,20 @@ namespace jpgd {
 			break;
 		}
 		case M_SOF0:  /* baseline DCT */
-		case M_SOF1:  /* extended sequential DCT */
+		case M_SOF1:  /* extended sequential DCT, Huffman */
 		{
 			read_sof_marker();
 			break;
 		}
-		case M_SOF9:  /* Arithmitic coding */
+		case M_SOF9:  /* extended sequential DCT, arithmetic coding */
 		{
-			stop_decoding(JPGD_NO_ARITHMITIC_SUPPORT);
+			m_arith_code_flag = JPGD_TRUE;
+			read_sof_marker();
+			break;
+		}
+		case M_SOF10: /* progressive DCT, arithmetic coding (not supported) */
+		{
+			stop_decoding(JPGD_UNSUPPORTED_MARKER);
 			break;
 		}
 		default:
@@ -1191,7 +1252,18 @@ namespace jpgd {
 		m_image_x_size = m_image_y_size = 0;
 		m_pStream = pStream;
 		m_progressive_flag = JPGD_FALSE;
-				
+		m_arith_code_flag = JPGD_FALSE;
+		m_pEntropy_decoder = nullptr;
+
+		// Default arithmetic conditioning per T.81 / libjpeg: DC L=0, U=1,
+		// AC K=5. DAC markers may override these before the first scan.
+		for (int i = 0; i < (JPGD_MAX_HUFF_TABLES >> 1); i++)
+		{
+			m_arith_dc_L[i] = 0;
+			m_arith_dc_U[i] = 1;
+			m_arith_ac_K[i] = 5;
+		}
+
 		memset(m_huff_ac, 0, sizeof(m_huff_ac));
 		memset(m_huff_num, 0, sizeof(m_huff_num));
 		memset(m_huff_val, 0, sizeof(m_huff_val));
@@ -1333,6 +1405,30 @@ namespace jpgd {
 		get_bits_no_markers(16);
 	}
 
+	// Variant for arithmetic coded scans: push every byte consumed during
+	// marker scanning back into the input stream so the arithmetic engine's
+	// own byte reader starts exactly at the first entropy-coded byte. Unlike
+	// fix_in_buffer(), the Huffman bit buffer is not primed because the
+	// arithmetic decoder reads raw bytes.
+	void jpeg_decoder::fix_in_buffer_for_arith()
+	{
+		assert((m_bits_left & 7) == 0);
+
+		if (m_bits_left == 16)
+			stuff_char((uint8)(m_bit_buf & 0xFF));
+
+		if (m_bits_left >= 8)
+			stuff_char((uint8)((m_bit_buf >> 8) & 0xFF));
+
+		stuff_char((uint8)((m_bit_buf >> 16) & 0xFF));
+		stuff_char((uint8)((m_bit_buf >> 24) & 0xFF));
+
+		// Mark the bit buffer empty; it must never be used inside an
+		// arithmetic segment.
+		m_bits_left = 0;
+		m_bit_buf = 0;
+	}
+
 	void jpeg_decoder::transform_mcu(int mcu_row)
 	{
 		jpgd_block_coeff_t* pSrc_ptr = m_pMCU_coefficients;
@@ -1457,25 +1553,38 @@ namespace jpgd {
 		if (c != (m_next_restart_num + M_RST0))
 			stop_decoding(JPGD_BAD_RESTART_MARKER);
 
-		// Reset each component's DC prediction values.
-		memset(&m_last_dc_val, 0, m_comps_in_frame * sizeof(uint));
-
 		m_eob_run = 0;
 
 		m_restarts_left = m_restart_interval;
 
 		m_next_restart_num = (m_next_restart_num + 1) & 7;
 
-		// Get the bit buffer going again...
+		if (m_arith_code_flag)
+		{
+			// Arithmetic: reset statistics, predictions and the interval
+			// decoder; the next two segment bytes are pulled on demand.
+			if (m_pEntropy_decoder)
+				m_pEntropy_decoder->restart();
+			m_bits_left = 0;
+			m_bit_buf = 0;
+		}
+		else
+		{
+			// Reset each component's DC prediction values.
+			memset(&m_last_dc_val, 0, m_comps_in_frame * sizeof(uint));
 
-		m_bits_left = 16;
-		get_bits_no_markers(16);
-		get_bits_no_markers(16);
+			// Get the bit buffer going again...
+			m_bits_left = 16;
+			get_bits_no_markers(16);
+			get_bits_no_markers(16);
+		}
 	}
 
-	static inline int dequantize_ac(int c, int q) { c *= q; return c; }
-
 	// Decodes and dequantizes the next row of coefficients.
+	// The entropy-coded details (Huffman or arithmetic) live entirely behind
+	// the entropy_decoder interface; this function only schedules blocks and
+	// runs the shared IDCT transform, so both coding methods produce identical
+	// downstream coefficient layouts.
 	void jpeg_decoder::decode_next_row()
 	{
 		int row_block = 0;
@@ -1485,102 +1594,10 @@ namespace jpgd {
 			if ((m_restart_interval) && (m_restarts_left == 0))
 				process_restart();
 
-			jpgd_block_coeff_t* p = m_pMCU_coefficients;
-			for (int mcu_block = 0; mcu_block < m_blocks_per_mcu; mcu_block++, p += 64)
+			for (int mcu_block = 0; mcu_block < m_blocks_per_mcu; mcu_block++)
 			{
-				int component_id = m_mcu_org[mcu_block];
-				if (m_comp_quant[component_id] >= JPGD_MAX_QUANT_TABLES)
-					stop_decoding(JPGD_DECODE_ERROR);
-
-				jpgd_quant_t* q = m_quant[m_comp_quant[component_id]];
-
-				int r, s;
-				s = huff_decode(m_pHuff_tabs[m_comp_dc_tab[component_id]], r);
-				if (s >= 16)
-					stop_decoding(JPGD_DECODE_ERROR);
-
-				s = JPGD_HUFF_EXTEND(r, s);
-
-				m_last_dc_val[component_id] = (s += m_last_dc_val[component_id]);
-
-				p[0] = static_cast<jpgd_block_coeff_t>(s * q[0]);
-
-				int prev_num_set = m_mcu_block_max_zag[mcu_block];
-
-				huff_tables* pH = m_pHuff_tabs[m_comp_ac_tab[component_id]];
-
-				int k;
-				for (k = 1; k < 64; k++)
-				{
-					int extra_bits;
-					s = huff_decode(pH, extra_bits);
-
-					r = s >> 4;
-					s &= 15;
-
-					if (s)
-					{
-						if (r)
-						{
-							if ((k + r) > 63)
-								stop_decoding(JPGD_DECODE_ERROR);
-
-							if (k < prev_num_set)
-							{
-								int n = JPGD_MIN(r, prev_num_set - k);
-								int kt = k;
-								while (n--)
-									p[g_ZAG[kt++]] = 0;
-							}
-
-							k += r;
-						}
-
-						s = JPGD_HUFF_EXTEND(extra_bits, s);
-
-						if (k >= 64)
-							stop_decoding(JPGD_DECODE_ERROR);
-
-						p[g_ZAG[k]] = static_cast<jpgd_block_coeff_t>(dequantize_ac(s, q[k])); //s * q[k];
-					}
-					else
-					{
-						if (r == 15)
-						{
-							if ((k + 16) > 64)
-								stop_decoding(JPGD_DECODE_ERROR);
-
-							if (k < prev_num_set)
-							{
-								int n = JPGD_MIN(16, prev_num_set - k);
-								int kt = k;
-								while (n--)
-								{
-									if (kt > 63)
-										stop_decoding(JPGD_DECODE_ERROR);
-									p[g_ZAG[kt++]] = 0;
-								}
-							}
-
-							k += 16 - 1; // - 1 because the loop counter is k
-
-							if (p[g_ZAG[k & 63]] != 0)
-								stop_decoding(JPGD_DECODE_ERROR);
-						}
-						else
-							break;
-					}
-				}
-
-				if (k < prev_num_set)
-				{
-					int kt = k;
-					while (kt < prev_num_set)
-						p[g_ZAG[kt++]] = 0;
-				}
-
-				m_mcu_block_max_zag[mcu_block] = k;
-
+				const int component_id = m_mcu_org[mcu_block];
+				m_pEntropy_decoder->decode_block(mcu_block, component_id);
 				row_block++;
 			}
 
@@ -2107,16 +2124,26 @@ namespace jpgd {
 	{
 		if (!m_progressive_flag)
 		{
-			// Attempt to read the EOI marker.
-			//get_bits_no_markers(m_bits_left & 7);
+			if (m_arith_code_flag)
+			{
+				// The arithmetic byte reader stops at and re-stuffs markers,
+				// so the stream is already positioned at 0xFF (EOI or the
+				// final RSTn followed by EOI). Just locate the EOI.
+				process_markers();
+			}
+			else
+			{
+				// Attempt to read the EOI marker.
+				//get_bits_no_markers(m_bits_left & 7);
 
-			// Prime the bit buffer
-			m_bits_left = 16;
-			get_bits(16);
-			get_bits(16);
+				// Prime the bit buffer
+				m_bits_left = 16;
+				get_bits(16);
+				get_bits(16);
 
-			// The next marker _should_ be EOI
-			process_markers();
+				// The next marker _should_ be EOI
+				process_markers();
+			}
 		}
 
 		m_total_bytes_read -= m_in_buf_left;
@@ -2540,7 +2567,37 @@ namespace jpgd {
 		if (!calc_mcu_block_order())
 			return JPGD_FALSE;
 
-		check_huff_tables();
+		if (m_arith_code_flag)
+		{
+			// Arithmetic scans reference conditioning table slots (0..3),
+			// validated when the SOS marker was parsed.
+			for (int i = 0; i < m_comps_in_scan; i++)
+			{
+				const int ci = m_comp_list[i];
+				if ((m_comp_dc_tab[ci] >= (JPGD_MAX_HUFF_TABLES >> 1)) ||
+					((m_comp_ac_tab[ci] - (JPGD_MAX_HUFF_TABLES >> 1)) >= (JPGD_MAX_HUFF_TABLES >> 1)))
+					stop_decoding(JPGD_DECODE_ERROR);
+			}
+
+			if (!m_pEntropy_decoder)
+				m_pEntropy_decoder = create_arith_entropy_decoder(this);
+			m_pEntropy_decoder->init();
+
+			// Position the byte stream at the first entropy-coded byte. The
+			// arithmetic engine reads raw bytes itself; the Huffman bit buffer
+			// is intentionally left out of the segment.
+			fix_in_buffer_for_arith();
+		}
+		else
+		{
+			check_huff_tables();
+
+			if (!m_pEntropy_decoder)
+				m_pEntropy_decoder = create_huffman_entropy_decoder(this);
+			m_pEntropy_decoder->init();
+
+			fix_in_buffer();
+		}
 
 		check_quant_tables();
 
@@ -2553,8 +2610,6 @@ namespace jpgd {
 			m_restarts_left = m_restart_interval;
 			m_next_restart_num = 0;
 		}
-
-		fix_in_buffer();
 
 		return JPGD_TRUE;
 	}

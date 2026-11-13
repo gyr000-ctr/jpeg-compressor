@@ -1,0 +1,74 @@
+[1] arithmetic vs coefficient-identical Huffman, reference cross-check
+ case gray:
+  PASS arithmetic file decodes with jpgd
+  PASS huffman twin decodes with jpgd
+  PASS dimensions match
+  PASS pixels byte-identical to coefficient-twin Huffman decode
+  PASS libjpeg accepts the arithmetic stream
+  PASS reference dimensions match
+  PASS arithmetic and Huffman share identical residual to libjpeg
+ case rgb444:
+  PASS arithmetic file decodes with jpgd
+  PASS huffman twin decodes with jpgd
+  PASS dimensions match
+  PASS pixels byte-identical to coefficient-twin Huffman decode
+  PASS libjpeg accepts the arithmetic stream
+  PASS reference dimensions match
+  PASS arithmetic and Huffman share identical residual to libjpeg
+ case rgb422:
+  PASS arithmetic file decodes with jpgd
+  PASS huffman twin decodes with jpgd
+  PASS dimensions match
+  PASS pixels byte-identical to coefficient-twin Huffman decode
+  PASS libjpeg accepts the arithmetic stream
+  PASS reference dimensions match
+  PASS arithmetic and Huffman share identical residual to libjpeg
+ case rgb420:
+  PASS arithmetic file decodes with jpgd
+  PASS huffman twin decodes with jpgd
+  PASS dimensions match
+  PASS pixels byte-identical to coefficient-twin Huffman decode
+  PASS libjpeg accepts the arithmetic stream
+  PASS reference dimensions match
+  PASS arithmetic and Huffman share identical residual to libjpeg
+ case rgb_rst:
+  PASS arithmetic file decodes with jpgd
+  PASS huffman twin decodes with jpgd
+  PASS dimensions match
+  PASS pixels byte-identical to coefficient-twin Huffman decode
+  PASS libjpeg accepts the arithmetic stream
+  PASS reference dimensions match
+  PASS arithmetic and Huffman share identical residual to libjpeg
+ case small:
+  PASS arithmetic file decodes with jpgd
+  PASS huffman twin decodes with jpgd
+  PASS dimensions match
+  PASS pixels byte-identical to coefficient-twin Huffman decode
+  PASS libjpeg accepts the arithmetic stream
+  PASS reference dimensions match
+  PASS arithmetic and Huffman share identical residual to libjpeg
+ case tall:
+  PASS arithmetic file decodes with jpgd
+  PASS huffman twin decodes with jpgd
+  PASS dimensions match
+  PASS pixels byte-identical to coefficient-twin Huffman decode
+  PASS libjpeg accepts the arithmetic stream
+  PASS reference dimensions match
+  PASS arithmetic and Huffman share identical residual to libjpeg
+[2] corrupted/truncated arithmetic streams must be rejected
+  PASS truncated at 16 bytes rejected
+  PASS truncated at 1449 bytes rejected
+  PASS truncated at 2899 bytes rejected
+  PASS truncated at 5791 bytes rejected
+  PASS corrupted+truncated stream rejected
+[3] malformed marker/table files
+  PASS invalid DAC marker rejected
+  PASS progressive arithmetic (SOF10) rejected
+  PASS non-JPEG input rejected
+[4] Huffman zero-regression (baseline Huffman files still decode)
+  PASS legacy Huffman rgb444 decodes
+  PASS legacy Huffman rgb422 decodes
+  PASS legacy Huffman rgb420 decodes
+  PASS legacy Huffman gray decodes
+
+ALL CHECKS PASSED: 0 failure(s)

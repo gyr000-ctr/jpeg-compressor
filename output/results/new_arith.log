@@ -1,0 +1,6 @@
+jpge/jpgd example app
+Using jpgd::decompress_jpeg_image_from_file
+Source JPEG file: "/home/gyr/feedback/uid5244/output/testdata/rgb420.arith.jpg", image resolution: 96x80, actual comps: 3
+Decompression time: 0.545ms
+Wrote decompressed image to TGA file "/home/gyr/feedback/uid5244/output/results/new_arith.tga"
+Success.

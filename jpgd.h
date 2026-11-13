@@ -48,7 +48,8 @@ namespace jpgd
 		JPGD_NOT_JPEG, JPGD_UNSUPPORTED_MARKER, JPGD_BAD_DQT_LENGTH, JPGD_TOO_MANY_BLOCKS,
 		JPGD_UNDEFINED_QUANT_TABLE, JPGD_UNDEFINED_HUFF_TABLE, JPGD_NOT_SINGLE_SCAN, JPGD_UNSUPPORTED_COLORSPACE,
 		JPGD_UNSUPPORTED_SAMP_FACTORS, JPGD_DECODE_ERROR, JPGD_BAD_RESTART_MARKER,
-		JPGD_BAD_SOS_SPECTRAL, JPGD_BAD_SOS_SUCCESSIVE, JPGD_STREAM_READ, JPGD_NOTENOUGHMEM, JPGD_TOO_MANY_SCANS
+		JPGD_BAD_SOS_SPECTRAL, JPGD_BAD_SOS_SUCCESSIVE, JPGD_STREAM_READ, JPGD_NOTENOUGHMEM, JPGD_TOO_MANY_SCANS,
+		JPGD_BAD_DAC_MARKER, JPGD_ARITH_DECODE_ERROR
 	};
 
 	// Input stream interface.
@@ -121,6 +122,8 @@ namespace jpgd
 	typedef int16 jpgd_quant_t;
 	typedef int16 jpgd_block_coeff_t;
 
+	class entropy_decoder;
+
 	class jpeg_decoder
 	{
 	public:
@@ -166,6 +169,12 @@ namespace jpgd
 		jpeg_decoder(const jpeg_decoder&);
 		jpeg_decoder& operator =(const jpeg_decoder&);
 
+		friend class entropy_decoder;
+		friend class huffman_entropy_decoder;
+		friend class arith_entropy_decoder;
+		friend entropy_decoder* create_huffman_entropy_decoder(jpeg_decoder* pD);
+		friend entropy_decoder* create_arith_entropy_decoder(jpeg_decoder* pD);
+
 		typedef void (*pDecode_block_func)(jpeg_decoder*, int, int, int);
 
 		struct huff_tables
@@ -201,6 +210,13 @@ namespace jpgd
 		jpeg_decoder_stream* m_pStream;
 
 		int m_progressive_flag;
+		int m_arith_code_flag;                        // nonzero for arithmetic coded frames (SOF9)
+
+		// Arithmetic coding conditioning (from DAC markers), one entry per
+		// table slot. Defaults per T.81 / libjpeg: DC L=0, DC U=1, AC K=5.
+		uint8 m_arith_dc_L[JPGD_MAX_HUFF_TABLES >> 1];
+		uint8 m_arith_dc_U[JPGD_MAX_HUFF_TABLES >> 1];
+		uint8 m_arith_ac_K[JPGD_MAX_HUFF_TABLES >> 1];
 
 		uint8 m_huff_ac[JPGD_MAX_HUFF_TABLES];
 		uint8* m_huff_num[JPGD_MAX_HUFF_TABLES];      // pointer to number of Huffman codes per bit size
@@ -235,6 +251,7 @@ namespace jpgd
 		int m_dest_bytes_per_scan_line;               // rounded up
 		int m_dest_bytes_per_pixel;                   // 4 (RGB) or 1 (Y)
 		huff_tables* m_pHuff_tabs[JPGD_MAX_HUFF_TABLES];
+		entropy_decoder* m_pEntropy_decoder;
 		coeff_buf* m_dc_coeffs[JPGD_MAX_COMPONENTS];
 		coeff_buf* m_ac_coeffs[JPGD_MAX_COMPONENTS];
 		int m_eob_run;
@@ -283,6 +300,7 @@ namespace jpgd
 		void word_clear(void* p, uint16 c, uint n);
 		void prep_in_buffer();
 		void read_dht_marker();
+		void read_dac_marker();
 		void read_dqt_marker();
 		void read_sof_marker();
 		void skip_variable_marker();
@@ -296,6 +314,7 @@ namespace jpgd
 		void init(jpeg_decoder_stream* pStream, uint32_t flags);
 		void create_look_ups();
 		void fix_in_buffer();
+		void fix_in_buffer_for_arith();
 		void transform_mcu(int mcu_row);
 		coeff_buf* coeff_buf_open(int block_num_x, int block_num_y, int block_len_x, int block_len_y);
 		inline jpgd_block_coeff_t* coeff_buf_getp(coeff_buf* cb, int block_x, int block_y);
@@ -322,14 +341,21 @@ namespace jpgd
 		void H1V1Convert();
 		void gray_convert();
 		void find_eoi();
-		inline uint get_char();
-		inline uint get_char(bool* pPadding_flag);
-		inline void stuff_char(uint8 q);
-		inline uint8 get_octet();
+		// These primitives are also called from the separate entropy-decoder
+		// translation units, so they have ordinary external linkage rather
+		// than being header-inline.
+		uint get_char();
+		uint get_char(bool* pPadding_flag);
+		void stuff_char(uint8 q);
+		uint8 get_octet();
 		inline uint get_bits(int num_bits);
 		inline uint get_bits_no_markers(int numbits);
-		inline int huff_decode(huff_tables* pH);
-		inline int huff_decode(huff_tables* pH, int& extrabits);
+		int huff_decode(huff_tables* pH);
+		int huff_decode(huff_tables* pH, int& extrabits);
+
+		// Sign-extends a value read in s magnitude bits (T.81 F.1.5.1 / F.2.2.1).
+		// Shared by the Huffman and arithmetic entropy back-ends.
+		static int extend_value(int bits, int s);
 
 		// Clamps a value between 0-255.
 		static inline uint8 clamp(int i)

@@ -1,0 +1,7 @@
+/home/gyr/feedback/uid5244/output/build_demo/CMakeFiles/jpge.dir
+/home/gyr/feedback/uid5244/output/build_demo/CMakeFiles/edit_cache.dir
+/home/gyr/feedback/uid5244/output/build_demo/CMakeFiles/rebuild_cache.dir
+/home/gyr/feedback/uid5244/output/build_demo/CMakeFiles/list_install_components.dir
+/home/gyr/feedback/uid5244/output/build_demo/CMakeFiles/install.dir
+/home/gyr/feedback/uid5244/output/build_demo/CMakeFiles/install/local.dir
+/home/gyr/feedback/uid5244/output/build_demo/CMakeFiles/install/strip.dir
