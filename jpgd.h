@@ -206,7 +206,7 @@ namespace jpgd
 		uint8* m_huff_num[JPGD_MAX_HUFF_TABLES];      // pointer to number of Huffman codes per bit size
 		uint8* m_huff_val[JPGD_MAX_HUFF_TABLES];      // pointer to Huffman codes per bit size
 		jpgd_quant_t* m_quant[JPGD_MAX_QUANT_TABLES]; // pointer to quantization tables
-		int m_scan_type;                              // Gray, Yh1v1, Yh1v2, Yh2v1, Yh2v2 (CMYK111, CMYK4114 no longer supported)
+		int m_scan_type;                              // Gray, Yh1v1, Yh1v2, Yh2v1, Yh2v2, Yh4v1 (CMYK111, CMYK4114 no longer supported)
 		int m_comps_in_frame;                         // # of components in frame
 		int m_comp_h_samp[JPGD_MAX_COMPONENTS];       // component's horizontal sampling factor
 		int m_comp_v_samp[JPGD_MAX_COMPONENTS];       // component's vertical sampling factor
@@ -313,11 +313,9 @@ namespace jpgd
 		void init_sequential();
 		void decode_start();
 		void decode_init(jpeg_decoder_stream* pStream, uint32_t flags);
-		void H2V2Convert();
+		void HxVConvertBox(int h_samp, int v_samp);
 		uint32_t H2V2ConvertFiltered();
-		void H2V1Convert();
-		void H2V1ConvertFiltered();
-		void H1V2Convert();
+		void HxV1ConvertFiltered(int h_samp);
 		void H1V2ConvertFiltered();
 		void H1V1Convert();
 		void gray_convert();

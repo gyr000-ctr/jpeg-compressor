@@ -72,7 +72,7 @@ namespace jpgd {
 		M_APP0 = 0xE0, M_APP15 = 0xEF, M_JPG0 = 0xF0, M_JPG13 = 0xFD, M_COM = 0xFE, M_TEM = 0x01, M_ERROR = 0x100, RST0 = 0xD0
 	};
 
-	enum JPEG_SUBSAMPLING { JPGD_GRAYSCALE = 0, JPGD_YH1V1, JPGD_YH2V1, JPGD_YH1V2, JPGD_YH2V2 };
+	enum JPEG_SUBSAMPLING { JPGD_GRAYSCALE = 0, JPGD_YH1V1, JPGD_YH2V1, JPGD_YH1V2, JPGD_YH2V2, JPGD_YH4V1 };
 
 #if JPGD_USE_SSE2
 #include "jpgd_idct.h"
@@ -881,7 +881,7 @@ namespace jpgd {
 			m_comp_h_samp[i] = get_bits(4);
 			m_comp_v_samp[i] = get_bits(4);
 
-			if (!m_comp_h_samp[i] || !m_comp_v_samp[i] || (m_comp_h_samp[i] > 2) || (m_comp_v_samp[i] > 2))
+			if (!m_comp_h_samp[i] || !m_comp_v_samp[i] || (m_comp_h_samp[i] > 4) || (m_comp_v_samp[i] > 4))
 				stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);
 
 			m_comp_quant[i] = get_bits(8);
@@ -1617,82 +1617,110 @@ namespace jpgd {
 		}
 	}
 
-	// YCbCr H2V1 (2x1:1:1, 4 m_blocks per MCU) to RGB
-	void jpeg_decoder::H2V1Convert()
+	// YCbCr HxV (h_samp x v_samp :1:1, h_samp*v_samp+2 m_blocks per MCU) to RGB, with box (nearest neighbor) chroma upsampling.
+	// Shared by all supported subsampled scan types: H2V1 (2x1), H1V2 (1x2), H2V2 (2x2) and H4V1 (4x1).
+	// For v_samp == 2 this converts two scanlines per call (into m_pScan_line_0/m_pScan_line_1), matching the decode() dispatch.
+	void jpeg_decoder::HxVConvertBox(int h_samp, int v_samp)
 	{
-		int row = m_max_mcu_y_size - m_mcu_lines_left;
+		const int blocks_per_mcu = h_samp * v_samp + 2;
+		const int row = m_max_mcu_y_size - m_mcu_lines_left;
+
 		uint8* d0 = m_pScan_line_0;
-		uint8* y = m_pSample_buf + row * 8;
-		uint8* c = m_pSample_buf + 2 * 64 + row * 8;
+		uint8* d1 = m_pScan_line_1;
+
+		uint8* y = m_pSample_buf;
+		uint8* c = m_pSample_buf + h_samp * v_samp * 64;
 
 		for (int i = m_max_mcus_per_row; i > 0; i--)
 		{
-			for (int l = 0; l < 2; l++)
+			for (int line = 0; line < v_samp; line++)
 			{
-				for (int j = 0; j < 4; j++)
+				const int r = row + line;
+				uint8* d = line ? d1 : d0;
+				const uint8* cy = c + (r / v_samp) * 8;
+
+				for (int bx = 0; bx < h_samp; bx++)
 				{
-					int cb = c[0];
-					int cr = c[64];
+					const uint8* ys = y + ((r >> 3) * h_samp + bx) * 64 + (r & 7) * 8;
+					const uint8* cc = cy + (bx * 8) / h_samp;
 
-					int rc = m_crr[cr];
-					int gc = ((m_crg[cr] + m_cbg[cb]) >> 16);
-					int bc = m_cbb[cb];
+					for (int j = 0; j < 8; j += h_samp)
+					{
+						int cb = cc[0];
+						int cr = cc[64];
 
-					int yy = y[j << 1];
-					d0[0] = clamp(yy + rc);
-					d0[1] = clamp(yy + gc);
-					d0[2] = clamp(yy + bc);
-					d0[3] = 255;
+						int rc = m_crr[cr];
+						int gc = ((m_crg[cr] + m_cbg[cb]) >> 16);
+						int bc = m_cbb[cb];
 
-					yy = y[(j << 1) + 1];
-					d0[4] = clamp(yy + rc);
-					d0[5] = clamp(yy + gc);
-					d0[6] = clamp(yy + bc);
-					d0[7] = 255;
+						for (int k = 0; k < h_samp; k++)
+						{
+							int yy = ys[j + k];
+							d[0] = clamp(yy + rc);
+							d[1] = clamp(yy + gc);
+							d[2] = clamp(yy + bc);
+							d[3] = 255;
 
-					d0 += 8;
+							d += 4;
+						}
 
-					c++;
+						cc++;
+					}
 				}
-				y += 64;
+
+				if (line)
+					d1 = d;
+				else
+					d0 = d;
 			}
 
-			y += 64 * 4 - 64 * 2;
-			c += 64 * 4 - 8;
+			y += blocks_per_mcu * 64;
+			c += blocks_per_mcu * 64;
 		}
 	}
 
-	// YCbCr H2V1 (2x1:1:1, 4 m_blocks per MCU) to RGB
-	void jpeg_decoder::H2V1ConvertFiltered()
+	// YCbCr HxV1 (Hx1:1:1, h_samp+2 m_blocks per MCU) to RGB, with triangle filtered horizontal chroma upsampling.
+	// Shared by the H2V1 (2x1:1:1) and H4V1 (4x1:1:1) sampling factors.
+	void jpeg_decoder::HxV1ConvertFiltered(int h_samp)
 	{
-		const uint BLOCKS_PER_MCU = 4;
+		const uint BLOCKS_PER_MCU = h_samp + 2;
 		int row = m_max_mcu_y_size - m_mcu_lines_left;
 		uint8* d0 = m_pScan_line_0;
 
-		const int half_image_x_size = (m_image_x_size >> 1) - 1;
+		// Chroma row is ceil(image_x_size/h_samp) samples wide. For h_samp == 2 keep the legacy
+		// (image_x_size >> 1) - 1 clamp so existing 2x1 output stays bit-exact; for wider factors
+		// use the exact ceil so the rightmost column doesn't read out of range chroma.
+		const int max_c_x = (h_samp == 2) ? ((m_image_x_size >> 1) - 1) : ((m_image_x_size + h_samp - 1) / h_samp - 1);
 		const int row_x8 = row * 8;
+		const int denom = 2 * h_samp;
 
 		for (int x = 0; x < m_image_x_size; x++)
 		{
-			int y = m_pSample_buf[check_sample_buf_ofs((x >> 4) * BLOCKS_PER_MCU * 64 + ((x & 8) ? 64 : 0) + (x & 7) + row_x8)];
+			int y = m_pSample_buf[check_sample_buf_ofs((x / (8 * h_samp)) * BLOCKS_PER_MCU * 64 + (((x >> 3) % h_samp) * 64) + (x & 7) + row_x8)];
 
-			int c_x0 = (x - 1) >> 1;
-			int c_x1 = JPGD_MIN(c_x0 + 1, half_image_x_size);
+			// Triangle filter: output pixel x maps to chroma position (2*x+1-h_samp)/(2*h_samp).
+			int t = 2 * x + 1 - h_samp;
+			int c_x0 = t / denom;
+			if ((t < 0) && (t % denom))
+				c_x0--; // floor division for negative t
+			const int frac = t - c_x0 * denom;
+
+			int c_x1 = JPGD_MIN(c_x0 + 1, max_c_x);
 			c_x0 = JPGD_MAX(c_x0, 0);
 
-			int a = (c_x0 >> 3) * BLOCKS_PER_MCU * 64 + (c_x0 & 7) + row_x8 + 128;
+			int a = (c_x0 >> 3) * BLOCKS_PER_MCU * 64 + (c_x0 & 7) + row_x8 + h_samp * 64;
 			int cb0 = m_pSample_buf[check_sample_buf_ofs(a)];
 			int cr0 = m_pSample_buf[check_sample_buf_ofs(a + 64)];
 
-			int b = (c_x1 >> 3) * BLOCKS_PER_MCU * 64 + (c_x1 & 7) + row_x8 + 128;
+			int b = (c_x1 >> 3) * BLOCKS_PER_MCU * 64 + (c_x1 & 7) + row_x8 + h_samp * 64;
 			int cb1 = m_pSample_buf[check_sample_buf_ofs(b)];
 			int cr1 = m_pSample_buf[check_sample_buf_ofs(b + 64)];
 
-			int w0 = (x & 1) ? 3 : 1;
-			int w1 = (x & 1) ? 1 : 3;
+			const int w0 = denom - frac;
+			const int w1 = frac;
 
-			int cb = (cb0 * w0 + cb1 * w1 + 2) >> 2;
-			int cr = (cr0 * w0 + cr1 * w1 + 2) >> 2;
+			int cb = (cb0 * w0 + cb1 * w1 + h_samp) / denom;
+			int cr = (cr0 * w0 + cr1 * w1 + h_samp) / denom;
 
 			int rc = m_crr[cr];
 			int gc = ((m_crg[cr] + m_cbg[cb]) >> 16);
@@ -1704,54 +1732,6 @@ namespace jpgd {
 			d0[3] = 255;
 
 			d0 += 4;
-		}
-	}
-
-	// YCbCr H2V1 (1x2:1:1, 4 m_blocks per MCU) to RGB
-	void jpeg_decoder::H1V2Convert()
-	{
-		int row = m_max_mcu_y_size - m_mcu_lines_left;
-		uint8* d0 = m_pScan_line_0;
-		uint8* d1 = m_pScan_line_1;
-		uint8* y;
-		uint8* c;
-
-		if (row < 8)
-			y = m_pSample_buf + row * 8;
-		else
-			y = m_pSample_buf + 64 * 1 + (row & 7) * 8;
-
-		c = m_pSample_buf + 64 * 2 + (row >> 1) * 8;
-
-		for (int i = m_max_mcus_per_row; i > 0; i--)
-		{
-			for (int j = 0; j < 8; j++)
-			{
-				int cb = c[0 + j];
-				int cr = c[64 + j];
-
-				int rc = m_crr[cr];
-				int gc = ((m_crg[cr] + m_cbg[cb]) >> 16);
-				int bc = m_cbb[cb];
-
-				int yy = y[j];
-				d0[0] = clamp(yy + rc);
-				d0[1] = clamp(yy + gc);
-				d0[2] = clamp(yy + bc);
-				d0[3] = 255;
-
-				yy = y[8 + j];
-				d1[0] = clamp(yy + rc);
-				d1[1] = clamp(yy + gc);
-				d1[2] = clamp(yy + bc);
-				d1[3] = 255;
-
-				d0 += 4;
-				d1 += 4;
-			}
-
-			y += 64 * 4;
-			c += 64 * 4;
 		}
 	}
 
@@ -1819,72 +1799,7 @@ namespace jpgd {
 		}
 	}
 
-	// YCbCr H2V2 (2x2:1:1, 6 m_blocks per MCU) to RGB
-	void jpeg_decoder::H2V2Convert()
-	{
-		int row = m_max_mcu_y_size - m_mcu_lines_left;
-		uint8* d0 = m_pScan_line_0;
-		uint8* d1 = m_pScan_line_1;
-		uint8* y;
-		uint8* c;
-
-		if (row < 8)
-			y = m_pSample_buf + row * 8;
-		else
-			y = m_pSample_buf + 64 * 2 + (row & 7) * 8;
-
-		c = m_pSample_buf + 64 * 4 + (row >> 1) * 8;
-
-		for (int i = m_max_mcus_per_row; i > 0; i--)
-		{
-			for (int l = 0; l < 2; l++)
-			{
-				for (int j = 0; j < 8; j += 2)
-				{
-					int cb = c[0];
-					int cr = c[64];
-
-					int rc = m_crr[cr];
-					int gc = ((m_crg[cr] + m_cbg[cb]) >> 16);
-					int bc = m_cbb[cb];
-
-					int yy = y[j];
-					d0[0] = clamp(yy + rc);
-					d0[1] = clamp(yy + gc);
-					d0[2] = clamp(yy + bc);
-					d0[3] = 255;
-
-					yy = y[j + 1];
-					d0[4] = clamp(yy + rc);
-					d0[5] = clamp(yy + gc);
-					d0[6] = clamp(yy + bc);
-					d0[7] = 255;
-
-					yy = y[j + 8];
-					d1[0] = clamp(yy + rc);
-					d1[1] = clamp(yy + gc);
-					d1[2] = clamp(yy + bc);
-					d1[3] = 255;
-
-					yy = y[j + 8 + 1];
-					d1[4] = clamp(yy + rc);
-					d1[5] = clamp(yy + gc);
-					d1[6] = clamp(yy + bc);
-					d1[7] = 255;
-
-					d0 += 8;
-					d1 += 8;
-
-					c++;
-				}
-				y += 64;
-			}
-
-			y += 64 * 6 - 64 * 2;
-			c += 64 * 6 - 8;
-		}
-	}
-
+	// YCbCr H2V2 (2x2:1:1, 6 m_blocks per MCU) to RGB, with triangle filtered chroma upsampling
 	uint32_t jpeg_decoder::H2V2ConvertFiltered()
 	{
 		const uint BLOCKS_PER_MCU = 6;
@@ -2204,7 +2119,7 @@ namespace jpgd {
 			{
 				if ((m_mcu_lines_left & 1) == 0)
 				{
-					H2V2Convert();
+					HxVConvertBox(2, 2);
 					*pScan_line = m_pScan_line_0;
 				}
 				else
@@ -2216,9 +2131,18 @@ namespace jpgd {
 		case JPGD_YH2V1:
 		{
 			if ((m_flags & cFlagBoxChromaFiltering) == 0)
-				H2V1ConvertFiltered();
+				HxV1ConvertFiltered(2);
 			else
-				H2V1Convert();
+				HxVConvertBox(2, 1);
+			*pScan_line = m_pScan_line_0;
+			break;
+		}
+		case JPGD_YH4V1:
+		{
+			if ((m_flags & cFlagBoxChromaFiltering) == 0)
+				HxV1ConvertFiltered(4);
+			else
+				HxVConvertBox(4, 1);
 			*pScan_line = m_pScan_line_0;
 			break;
 		}
@@ -2233,7 +2157,7 @@ namespace jpgd {
 			{
 				if ((m_mcu_lines_left & 1) == 0)
 				{
-					H1V2Convert();
+					HxVConvertBox(1, 2);
 					*pScan_line = m_pScan_line_0;
 				}
 				else
@@ -2610,6 +2534,13 @@ namespace jpgd {
 				m_max_mcu_x_size = 16;
 				m_max_mcu_y_size = 16;
 			}
+			else if ((m_comp_h_samp[0] == 4) && (m_comp_v_samp[0] == 1))
+			{
+				m_scan_type = JPGD_YH4V1;
+				m_max_blocks_per_mcu = 6;
+				m_max_mcu_x_size = 32;
+				m_max_mcu_y_size = 8;
+			}
 			else
 				stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);
 		}
@@ -2625,7 +2556,11 @@ namespace jpgd {
 		else
 			m_dest_bytes_per_pixel = 4;
 
-		m_dest_bytes_per_scan_line = ((m_image_x_size + 15) & 0xFFF0) * m_dest_bytes_per_pixel;
+		// The scan line buffers must hold a whole number of (padded) MCU rows of pixels: the converters
+		// always write m_max_mcus_per_row * m_max_mcu_x_size pixels. Round up to at least 16 pixels,
+		// exactly like the original code, so existing sampling factors get the identical buffer size.
+		const uint x_scan_line_pad = JPGD_MAX(m_max_mcu_x_size, 16);
+		m_dest_bytes_per_scan_line = ((m_image_x_size + (x_scan_line_pad - 1)) / x_scan_line_pad) * x_scan_line_pad * m_dest_bytes_per_pixel;
 
 		m_real_dest_bytes_per_scan_line = (m_image_x_size * m_dest_bytes_per_pixel);
 

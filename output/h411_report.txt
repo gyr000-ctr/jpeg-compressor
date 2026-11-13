@@ -1,0 +1,3 @@
+photo 4:1:1  filtered-vs-libjpeg(fancy) PSNR=43.1725 (0.359771)dB  box-vs-libjpeg(box) PSNR=60.153 (0.501275)dB
+photo_odd 4:1:1  filtered-vs-libjpeg(fancy) PSNR=38.29 (0.319083)dB  box-vs-libjpeg(box) PSNR=59.8092 (0.49841)dB
+noise 4:1:1  filtered-vs-libjpeg(fancy) PSNR=27.21 (0.22675)dB  box-vs-libjpeg(box) PSNR=59.0627 (0.492189)dB

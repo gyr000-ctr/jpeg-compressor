@@ -1,0 +1,6 @@
+jpge/jpgd example app
+Using jpgd::decompress_jpeg_image_from_file
+Source JPEG file: "output/bad/samp_ok.jpg", image resolution: 256x160, actual comps: 3
+Decompression time: 0.438ms
+Wrote decompressed image to TGA file "output/bad/samp_ok.tga"
+Success.

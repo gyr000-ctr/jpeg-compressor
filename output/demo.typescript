@@ -1,0 +1,55 @@
+Script started on 2026-11-13 13:49:33+08:00 [COMMAND="bash output/run_demo.sh" <not executed on terminal>]
+
+================================================================
+  1/5 构建：含 4:1:1 支持的解码器 (cmake --build)
+================================================================
+[100%] Built target jpge
+build OK -> output/bin/jpge_new
+
+================================================================
+  2/5 既有采样比例零回归：baseline vs 新版 (1x1/2x1/1x2/2x2/gray, 过滤+box 两种模式)
+================================================================
+  photo_2x2          [filt] IDENTICAL
+  photo_2x2          [box ] IDENTICAL
+  photo_odd_1x2      [filt] IDENTICAL
+  photo_odd_1x2      [box ] IDENTICAL
+  noise_2x1          [filt] IDENTICAL
+  noise_2x1          [box ] IDENTICAL
+  photo_1x1          [filt] IDENTICAL
+  photo_1x1          [box ] IDENTICAL
+  photo_gray         [filt] IDENTICAL
+  photo_gray         [box ] IDENTICAL
+  => 10/10 输出逐字节一致（完整矩阵 30/30 见 output/regression_report.txt）
+
+================================================================
+  3/5 4:1:1 解码与上采样：与 libjpeg 参考对比 (PSNR)
+================================================================
+  photo      三角过滤 vs libjpeg(fancy): 43.1725 dB | box vs libjpeg(box): 60.153 dB
+  photo_odd  三角过滤 vs libjpeg(fancy): 38.29 dB | box vs libjpeg(box): 59.8092 dB
+  noise      三角过滤 vs libjpeg(fancy): 27.21 dB | box vs libjpeg(box): 59.0627 dB
+  色度边缘对齐测试（绿->品红锐利边缘，真实位置 x=64）：
+    ours(4:1:1 filtered) edge at x = 64.49
+    libjpeg reference    edge at x = 64.5
+
+================================================================
+  4/5 非法采样系数报错 (h=0/5, v=0/5, 3x1, 2x4, 4x2 均被拒绝)
+================================================================
+  samp_h0      -> REJECTED
+  samp_h2v4    -> REJECTED
+  samp_h3v1    -> REJECTED
+  samp_h4v2    -> REJECTED
+  samp_h5      -> REJECTED
+  samp_ok      -> ACCEPTED
+  samp_v0      -> REJECTED
+  samp_v5      -> REJECTED
+
+================================================================
+  5/5 总结
+================================================================
+  - 新增 JPGD_YH4V1 (4x1:1:1) 解码与上采样
+  - 公共层: HxVConvertBox(h,v) / HxV1ConvertFiltered(h)，2x1/1x2/2x2/4x1 共用
+  - 既有比例 30/30 逐字节零回归；非法采样系数全部拒绝
+  - 4:1:1 box 模式与 libjpeg 最大像素误差 <= 3 (仅 IDCT 舍入差异)
+demo done.
+
+Script done on 2026-11-13 13:49:57+08:00 [COMMAND_EXIT_CODE="0"]

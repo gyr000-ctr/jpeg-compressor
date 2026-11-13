@@ -1,0 +1,3 @@
+jpge/jpgd example app
+Using jpgd::decompress_jpeg_image_from_file
+Failed loading JPEG file "output/bad/samp_h4v2.jpg"!
