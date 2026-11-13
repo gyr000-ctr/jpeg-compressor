@@ -37,7 +37,7 @@ static int print_usage()
 	printf("\nOptions supported in compression mode (the default):\n");
 	printf("-o: Enable optimized Huffman tables (slower, but smaller files)\n");
 	printf("-luma: Output Y-only image\n");
-	printf("-h1v1, -h2v1, -h2v2: Chroma subsampling (default is either Y-only or H2V2)\n");
+	printf("-h1v1, -h2v1, -h2v2, -h4v1: Chroma subsampling (default is either Y-only or H2V2)\n");
 	printf("-m: Test mem to mem compression (instead of mem to file)\n");
 	printf("-wfilename.tga: Write decompressed image to filename.tga\n");
 	printf("-s: Use stb_image.h to decompress JPEG image, instead of jpgd.cpp\n");
@@ -403,6 +403,8 @@ int main(int arg_c, char* ppArgs[])
 					subsampling = jpge::H2V1;
 				else if (strcasecmp(&ppArgs[arg_index][1], "h2v2") == 0)
 					subsampling = jpge::H2V2;
+				else if (strcasecmp(&ppArgs[arg_index][1], "h4v1") == 0)
+					subsampling = jpge::H4V1;
 				else
 				{
 					log_printf("Unrecognized subsampling: %s\n", ppArgs[arg_index]);

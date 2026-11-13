@@ -115,6 +115,9 @@ namespace jpgd
 	enum
 	{
 		JPGD_IN_BUF_SIZE = 8192, JPGD_MAX_BLOCKS_PER_MCU = 10, JPGD_MAX_HUFF_TABLES = 8, JPGD_MAX_QUANT_TABLES = 4,
+		// Highest component sampling factor accepted in a SOF marker.
+		// 4 is needed for H4V1 (4:1:1) chroma subsampling; anything higher is rejected.
+		JPGD_MAX_SAMPLING_FACTOR = 4,
 		JPGD_MAX_COMPONENTS = 4, JPGD_MAX_COMPS_IN_SCAN = 4, JPGD_MAX_BLOCKS_PER_ROW = 16384, JPGD_MAX_HEIGHT = 32768, JPGD_MAX_WIDTH = 32768
 	};
 
@@ -320,6 +323,14 @@ namespace jpgd
 		void H1V2Convert();
 		void H1V2ConvertFiltered();
 		void H1V1Convert();
+		// H4V1 (4:1:1) conversion: luma blocks per MCU is 4, chroma is horizontally 4x subsampled.
+		void H4V1Convert();
+		void H4V1ConvertFiltered();
+		// Shared horizontal chroma resampling layer used by every horizontal-subsampling path.
+		// h_samp is the luma horizontal sampling factor (2 for H2V1, 4 for H4V1).
+		void write_rgba_pixel(uint8*& d, int y_sample, int cb, int cr);
+		int resample_chroma_horizontal_box(const uint8* sample_buf, int blocks_per_mcu, int h_samp, int x, int row_x8, int comp_ofs);
+		int resample_chroma_pair_horizontal_linear(const uint8* sample_buf, int blocks_per_mcu, int h_samp, int image_x_size, int x, int row_x8, int comp_ofs, int* pcb, int* pcr);
 		void gray_convert();
 		void find_eoi();
 		inline uint get_char();

@@ -1,0 +1,7 @@
+{"version": 2, "width": 100, "height": 30, "timestamp": 1794555086, "idle_time_limit": 2.0, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "段1-生成4:1:1素材"}
+[0.01086, "o", "\r\n\u001b[1;36m================================================================\r\n  段 1/4：用仓库自带入口生成 4:1:1 (H4V1) 素材\r\n================================================================\u001b[0m\r\n"]
+[1.013279, "o", "$ jpge -h4v1 colorbars.tga h4v1.jpg 95\r\n"]
+[2.017737, "o", "jpge/jpgd example app\r\nSource file: \"/home/gyr/feedback/uid5245/output/testdata/colorbars.tga\", image resolution: 128x32, actual comps: 3\r\nWriting JPEG image to file: /home/gyr/feedback/uid5245/output/demo/h4v1.jpg\r\n"]
+[2.017923, "o", "Compressed file size: 1058, bits/pixel: 2.066\r\nUsing jpgd::decompress_jpeg_image_from_file\r\n"]
+[2.018007, "o", "Compression time: 0.138ms, Decompression time: 0.060ms\r\n"]
+[2.018164, "o", "Error Max: 114.000000, Mean: 12.734375, Mean^2: 857.072266, RMSE: 29.275797, PSNR: 18.800629\r\nSuccess.\r\n"]

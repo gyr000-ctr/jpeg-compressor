@@ -14,7 +14,7 @@ namespace jpge
 	typedef unsigned int   uint;
 
 	// JPEG chroma subsampling factors. Y_ONLY (grayscale images) and H2V2 (color images) are the most common.
-	enum subsampling_t { Y_ONLY = 0, H1V1 = 1, H2V1 = 2, H2V2 = 3 };
+	enum subsampling_t { Y_ONLY = 0, H1V1 = 1, H2V1 = 2, H2V2 = 3, H4V1 = 4 };
 
 	// JPEG compression parameters structure.
 	struct params
@@ -24,7 +24,7 @@ namespace jpge
 		inline bool check() const
 		{
 			if ((m_quality < 1) || (m_quality > 100)) return false;
-			if ((uint)m_subsampling > (uint)H2V2) return false;
+			if ((uint)m_subsampling > (uint)H4V1) return false;
 			return true;
 		}
 
@@ -36,6 +36,7 @@ namespace jpge
 		// 1 = YCbCr, no subsampling (H1V1, YCbCr 1x1x1, 3 blocks per MCU)
 		// 2 = YCbCr, H2V1 subsampling (YCbCr 2x1x1, 4 blocks per MCU)
 		// 3 = YCbCr, H2V2 subsampling (YCbCr 4x1x1, 6 blocks per MCU-- very common)
+		// 4 = YCbCr, H4V1 (4:1:1) subsampling (YCbCr 4x1:1:1, 6 blocks per MCU)
 		subsampling_t m_subsampling;
 
 		// Disables CbCr discrimination - only intended for testing.
@@ -153,6 +154,7 @@ namespace jpge
 		void load_block_8_8(int x, int y, int c);
 		void load_block_16_8(int x, int c);
 		void load_block_16_8_8(int x, int c);
+		void load_block_32_8_8(int x, int c);
 		void load_quantized_coefficients(int component_num);
 		void flush_output_buffer();
 		void put_bits(uint bits, uint len);

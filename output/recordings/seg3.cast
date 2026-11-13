@@ -1,0 +1,12 @@
+{"version": 2, "width": 100, "height": 30, "timestamp": 1794555091, "idle_time_limit": 2.0, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "段3-解码与stb对照"}
+[0.009801, "o", "\r\n\u001b[1;36m================================================================\r\n  段 3/4：两种上采样解码 + 与 stb 参考对照\r\n================================================================\u001b[0m\r\n"]
+[1.014087, "o", "jpge/jpgd example app\r\nUsing jpgd::decompress_jpeg_image_from_file\r\n"]
+[1.014375, "o", "Source JPEG file: \"/home/gyr/feedback/uid5245/output/demo/h4v1.jpg\", image resolution: 128x32, actual comps: 3\r\nDecompression time: 0.115ms\r\n"]
+[1.014514, "o", "Wrote decompressed image to TGA file \"/home/gyr/feedback/uid5245/output/demo/h4v1_linear.tga\"\r\nSuccess.\r\n"]
+[1.016486, "o", "jpge/jpgd example app\r\nUsing jpgd::decompress_jpeg_image_from_file\r\n"]
+[1.016638, "o", "Source JPEG file: \"/home/gyr/feedback/uid5245/output/demo/h4v1.jpg\", image resolution: 128x32, actual comps: 3\r\nDecompression time: 0.082ms\r\n"]
+[1.016888, "o", "Wrote decompressed image to TGA file \"/home/gyr/feedback/uid5245/output/demo/h4v1_box.tga\"\r\nSuccess.\r\n"]
+[1.018818, "o", "jpge/jpgd example app\r\nUsing stbi_load\r\n"]
+[1.018902, "o", "Source JPEG file: \"/home/gyr/feedback/uid5245/output/demo/h4v1.jpg\", image resolution: 128x32, actual comps: 3\r\nDecompression time: 0.063ms\r\n"]
+[1.0191, "o", "Wrote decompressed image to TGA file \"/home/gyr/feedback/uid5245/output/demo/h4v1_stb_ref.tga\"\r\nSuccess.\r\n"]
+[1.028089, "o", "box 模式 jpgd vs stb 最大通道差 = 2\r\n"]

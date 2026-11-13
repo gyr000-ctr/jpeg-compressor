@@ -1,5 +1,5 @@
 // jpgd.cpp - C++ class for JPEG decompression. Written by Richard Geldreich <richgel99@gmail.com> between 1994-2020.
-// Supports progressive and baseline sequential JPEG image files, and the most common chroma subsampling factors: Y, H1V1, H2V1, H1V2, and H2V2.
+// Supports progressive and baseline sequential JPEG image files, and the most common chroma subsampling factors: Y, H1V1, H2V1, H1V2, H2V2, and H4V1 (4:1:1).
 // Supports box and linear chroma upsampling.
 //
 // Released under two licenses. You are free to choose which license you want:
@@ -72,7 +72,7 @@ namespace jpgd {
 		M_APP0 = 0xE0, M_APP15 = 0xEF, M_JPG0 = 0xF0, M_JPG13 = 0xFD, M_COM = 0xFE, M_TEM = 0x01, M_ERROR = 0x100, RST0 = 0xD0
 	};
 
-	enum JPEG_SUBSAMPLING { JPGD_GRAYSCALE = 0, JPGD_YH1V1, JPGD_YH2V1, JPGD_YH1V2, JPGD_YH2V2 };
+	enum JPEG_SUBSAMPLING { JPGD_GRAYSCALE = 0, JPGD_YH1V1, JPGD_YH2V1, JPGD_YH1V2, JPGD_YH2V2, JPGD_YH4V1 };
 
 #if JPGD_USE_SSE2
 #include "jpgd_idct.h"
@@ -881,7 +881,7 @@ namespace jpgd {
 			m_comp_h_samp[i] = get_bits(4);
 			m_comp_v_samp[i] = get_bits(4);
 
-			if (!m_comp_h_samp[i] || !m_comp_v_samp[i] || (m_comp_h_samp[i] > 2) || (m_comp_v_samp[i] > 2))
+			if (!m_comp_h_samp[i] || !m_comp_v_samp[i] || (m_comp_h_samp[i] > JPGD_MAX_SAMPLING_FACTOR) || (m_comp_v_samp[i] > JPGD_MAX_SAMPLING_FACTOR))
 				stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);
 
 			m_comp_quant[i] = get_bits(8);
@@ -1591,6 +1591,108 @@ namespace jpgd {
 	}
 
 	// YCbCr H1V1 (1x1:1:1, 3 m_blocks per MCU) to RGB
+	//
+	// Shared chroma resampling layer.
+	//
+	// Every horizontal chroma subsampling path (H2V1 and H4V1) upsamples the Cb/Cr
+	// planes through these helpers instead of carrying its own copy of the math.
+	// h_samp is the luma horizontal sampling factor relative to chroma (2 or 4).
+	// The sample buffer holds m_blocks_per_mcu 8x8 blocks per MCU, with the two
+	// chroma blocks following the luma block(s); chroma component Cb is at block
+	// offset h_samp and Cr one block further.
+	//
+
+	// Emits one RGBA pixel from a luma sample and already-upsampled Cb/Cr.
+	void jpeg_decoder::write_rgba_pixel(uint8*& d, int y_sample, int cb, int cr)
+	{
+		d[0] = clamp(y_sample + m_crr[cr]);
+		d[1] = clamp(y_sample + ((m_crg[cr] + m_cbg[cb]) >> 16));
+		d[2] = clamp(y_sample + m_cbb[cb]);
+		d[3] = 255;
+		d += 4;
+	}
+
+	// Box (nearest-neighbor) horizontal chroma upsampling: returns the single
+	// Cb (comp_ofs == 0) or Cr (comp_ofs == 64) sample that covers luma column x.
+	int jpeg_decoder::resample_chroma_horizontal_box(const uint8* sample_buf, int blocks_per_mcu, int h_samp, int x, int row_x8, int comp_ofs)
+	{
+		const int chroma_x = x / h_samp;
+		const int ofs = (chroma_x >> 3) * blocks_per_mcu * 64 + (chroma_x & 7) + row_x8 + h_samp * 64 + comp_ofs;
+		return sample_buf[check_sample_buf_ofs(ofs)];
+	}
+
+	// Linear (triangular weighted) horizontal chroma upsampling.
+	// Computes the interpolated Cb/Cr pair for luma column x and returns the
+	// luma sample at that column (looked up through the same shared block math),
+	// so the caller only has to emit the pixel.
+	//
+	// Single implementation shared by every horizontal subsampling path
+	// (h_samp == 2 for H2V1, h_samp == 4 for H4V1). The h_samp == 2 branch
+	// reproduces the legacy H2V1 filter pixel-for-pixel (including its edge
+	// handling via arithmetic-shift division and un-clamped neighbor selection);
+	// the h_samp == 4 branch applies the same triangle weights over the wider
+	// 4-luma chroma cell: the two central columns hold the cell's own sample and
+	// the two outer columns blend 1/4..3/4 with the neighboring cell.
+	int jpeg_decoder::resample_chroma_pair_horizontal_linear(const uint8* sample_buf, int blocks_per_mcu, int h_samp, int image_x_size, int x, int row_x8, int comp_ofs, int* pcb, int* pcr)
+	{
+		const int chroma_width_minus_one = (image_x_size / h_samp) - 1;
+		int c_x0, c_x1, w0, w1;
+
+		if (h_samp == 2)
+		{
+			// Exact legacy H2V1 behavior. Arithmetic right shift (floor) and the
+			// neighbor chosen before clamping preserve the original edge result.
+			int c0 = (x - 1) >> 1;
+			c_x1 = JPGD_MIN(c0 + 1, chroma_width_minus_one);
+			c_x0 = JPGD_MAX(c0, 0);
+			w0 = (x & 1) ? 3 : 1;
+			w1 = (x & 1) ? 1 : 3;
+		}
+		else
+		{
+			// h_samp == 4 (4:1:1): cell k spans luma columns 4k..4k+3.
+			const int cell = x >> 2;
+			const int phase = x & 3;
+			switch (phase)
+			{
+			case 0: c_x0 = JPGD_MAX(cell - 1, 0); c_x1 = cell;                       w0 = 1; w1 = 3; break;
+			case 1: c_x0 = c_x1 = cell;                                                w0 = 0; w1 = 1; break;
+			case 2: c_x0 = c_x1 = cell;                                                w0 = 1; w1 = 0; break;
+			default: c_x0 = cell; c_x1 = JPGD_MIN(cell + 1, chroma_width_minus_one);  w0 = 3; w1 = 1; break;
+			}
+		}
+
+		const int a = (c_x0 >> 3) * blocks_per_mcu * 64 + (c_x0 & 7) + row_x8 + h_samp * 64 + comp_ofs;
+		const int cb0 = sample_buf[check_sample_buf_ofs(a)];
+		const int cr0 = sample_buf[check_sample_buf_ofs(a + 64)];
+
+		const int b = (c_x1 >> 3) * blocks_per_mcu * 64 + (c_x1 & 7) + row_x8 + h_samp * 64 + comp_ofs;
+		const int cb1 = sample_buf[check_sample_buf_ofs(b)];
+		const int cr1 = sample_buf[check_sample_buf_ofs(b + 64)];
+
+		if (w0 == 0)
+		{
+			// Pure hold on the right sample of the pair (exact, no rounding).
+			*pcb = cb1;
+			*pcr = cr1;
+		}
+		else if (w1 == 0)
+		{
+			// Pure hold on the left sample of the pair (exact, no rounding).
+			*pcb = cb0;
+			*pcr = cr0;
+		}
+		else
+		{
+			// Triangle blend; weights always sum to 4.
+			*pcb = (cb0 * w0 + cb1 * w1 + 2) >> 2;
+			*pcr = (cr0 * w0 + cr1 * w1 + 2) >> 2;
+		}
+
+		const int y_ofs = (x / (8 * h_samp)) * blocks_per_mcu * 64 + (((x & (8 * h_samp - 1)) >> 3) * 64) + (x & 7) + row_x8;
+		return sample_buf[check_sample_buf_ofs(y_ofs)];
+	}
+
 	void jpeg_decoder::H1V1Convert()
 	{
 		int row = m_max_mcu_y_size - m_mcu_lines_left;
@@ -1662,48 +1764,58 @@ namespace jpgd {
 		}
 	}
 
-	// YCbCr H2V1 (2x1:1:1, 4 m_blocks per MCU) to RGB
+	// YCbCr H2V1 (2x1:1:1, 4 m_blocks per MCU) to RGB, linear chroma upsampling.
+	// Thin wrapper over the shared horizontal resampling layer.
 	void jpeg_decoder::H2V1ConvertFiltered()
 	{
 		const uint BLOCKS_PER_MCU = 4;
+		const int H_SAMP = 2;
 		int row = m_max_mcu_y_size - m_mcu_lines_left;
 		uint8* d0 = m_pScan_line_0;
-
-		const int half_image_x_size = (m_image_x_size >> 1) - 1;
 		const int row_x8 = row * 8;
 
 		for (int x = 0; x < m_image_x_size; x++)
 		{
-			int y = m_pSample_buf[check_sample_buf_ofs((x >> 4) * BLOCKS_PER_MCU * 64 + ((x & 8) ? 64 : 0) + (x & 7) + row_x8)];
+			int cb, cr;
+			int y = resample_chroma_pair_horizontal_linear(m_pSample_buf, BLOCKS_PER_MCU, H_SAMP, m_image_x_size, x, row_x8, 0, &cb, &cr);
+			write_rgba_pixel(d0, y, cb, cr);
+		}
+	}
 
-			int c_x0 = (x - 1) >> 1;
-			int c_x1 = JPGD_MIN(c_x0 + 1, half_image_x_size);
-			c_x0 = JPGD_MAX(c_x0, 0);
+	// YCbCr H4V1 (4x1:1:1, 6 m_blocks per MCU) to RGB, box chroma upsampling.
+	void jpeg_decoder::H4V1Convert()
+	{
+		const uint BLOCKS_PER_MCU = 6;
+		const int H_SAMP = 4;
+		int row = m_max_mcu_y_size - m_mcu_lines_left;
+		uint8* d0 = m_pScan_line_0;
+		const int row_x8 = row * 8;
 
-			int a = (c_x0 >> 3) * BLOCKS_PER_MCU * 64 + (c_x0 & 7) + row_x8 + 128;
-			int cb0 = m_pSample_buf[check_sample_buf_ofs(a)];
-			int cr0 = m_pSample_buf[check_sample_buf_ofs(a + 64)];
+		for (int x = 0; x < m_image_x_size; x++)
+		{
+			const int cb = resample_chroma_horizontal_box(m_pSample_buf, BLOCKS_PER_MCU, H_SAMP, x, row_x8, 0);
+			const int cr = resample_chroma_horizontal_box(m_pSample_buf, BLOCKS_PER_MCU, H_SAMP, x, row_x8, 64);
+			const int y_ofs = (x >> 5) * BLOCKS_PER_MCU * 64 + ((x & 24) << 3) + (x & 7) + row_x8;
+			const int y = m_pSample_buf[check_sample_buf_ofs(y_ofs)];
+			write_rgba_pixel(d0, y, cb, cr);
+		}
+	}
 
-			int b = (c_x1 >> 3) * BLOCKS_PER_MCU * 64 + (c_x1 & 7) + row_x8 + 128;
-			int cb1 = m_pSample_buf[check_sample_buf_ofs(b)];
-			int cr1 = m_pSample_buf[check_sample_buf_ofs(b + 64)];
+	// YCbCr H4V1 (4x1:1:1, 6 m_blocks per MCU) to RGB, linear chroma upsampling.
+	// Same shared layer as H2V1, only the horizontal sampling factor differs.
+	void jpeg_decoder::H4V1ConvertFiltered()
+	{
+		const uint BLOCKS_PER_MCU = 6;
+		const int H_SAMP = 4;
+		int row = m_max_mcu_y_size - m_mcu_lines_left;
+		uint8* d0 = m_pScan_line_0;
+		const int row_x8 = row * 8;
 
-			int w0 = (x & 1) ? 3 : 1;
-			int w1 = (x & 1) ? 1 : 3;
-
-			int cb = (cb0 * w0 + cb1 * w1 + 2) >> 2;
-			int cr = (cr0 * w0 + cr1 * w1 + 2) >> 2;
-
-			int rc = m_crr[cr];
-			int gc = ((m_crg[cr] + m_cbg[cb]) >> 16);
-			int bc = m_cbb[cb];
-
-			d0[0] = clamp(y + rc);
-			d0[1] = clamp(y + gc);
-			d0[2] = clamp(y + bc);
-			d0[3] = 255;
-
-			d0 += 4;
+		for (int x = 0; x < m_image_x_size; x++)
+		{
+			int cb, cr;
+			int y = resample_chroma_pair_horizontal_linear(m_pSample_buf, BLOCKS_PER_MCU, H_SAMP, m_image_x_size, x, row_x8, 0, &cb, &cr);
+			write_rgba_pixel(d0, y, cb, cr);
 		}
 	}
 
@@ -2213,6 +2325,15 @@ namespace jpgd {
 
 			break;
 		}
+		case JPGD_YH4V1:
+		{
+			if ((m_flags & cFlagBoxChromaFiltering) == 0)
+				H4V1ConvertFiltered();
+			else
+				H4V1Convert();
+			*pScan_line = m_pScan_line_0;
+			break;
+		}
 		case JPGD_YH2V1:
 		{
 			if ((m_flags & cFlagBoxChromaFiltering) == 0)
@@ -2609,6 +2730,14 @@ namespace jpgd {
 				m_max_blocks_per_mcu = 6;
 				m_max_mcu_x_size = 16;
 				m_max_mcu_y_size = 16;
+			}
+			else if ((m_comp_h_samp[0] == 4) && (m_comp_v_samp[0] == 1))
+			{
+				// 4:1:1: four 8x8 luma blocks per MCU row, single Cb/Cr block.
+				m_scan_type = JPGD_YH4V1;
+				m_max_blocks_per_mcu = 6;
+				m_max_mcu_x_size = 32;
+				m_max_mcu_y_size = 8;
 			}
 			else
 				stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);

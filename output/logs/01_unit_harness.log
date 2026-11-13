@@ -1,0 +1,28 @@
+== 1. H4V1 encode/decode round trip ==
+  [PASS] jpge::params accepts H4V1
+  [PASS] H4V1 compression succeeds
+  [PASS] SOF marker found in H4V1 stream
+  [PASS] Y component sampling is H4V1 (0x41)
+  [PASS] Cb component sampling is H1V1 (0x11)
+  [PASS] Cr component sampling is H1V1 (0x11)
+  [PASS] jpgd decodes H4V1 stream
+  [PASS] decoded dimensions match
+  [info] H4V1 round-trip RMSE: 1.172
+  [PASS] H4V1 round-trip RMSE within tolerance (<6)
+== 2. Illegal sampling factors are rejected ==
+  [PASS] stream patch succeeds
+  [info] 'zero sampling factors (0x00)' -> error code -231
+  [PASS] zero sampling factors (0x00)
+  [PASS] stream patch succeeds
+  [info] 'factor 3 horizontal (0x31)' -> error code -231
+  [PASS] factor 3 horizontal (0x31)
+  [PASS] stream patch succeeds
+  [info] 'factor 5 horizontal (0x51)' -> error code -231
+  [PASS] factor 5 horizontal (0x51)
+  [PASS] stream patch succeeds
+  [info] 'chroma not 1x1 (Cb 0x22)' -> error code -231
+  [PASS] chroma not 1x1 (Cb 0x22)
+== 3. Encoder params range checks ==
+  [PASS] out-of-range subsampling rejected by params::check()
+
+ALL TESTS PASSED: 0 failure(s)

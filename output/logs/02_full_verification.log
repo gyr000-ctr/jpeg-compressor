@@ -1,0 +1,125 @@
+== A. Zero regression on pre-existing sampling modes ==
+  [PASS] gradient.tga h1v1: both encoders succeed
+  [PASS] gradient.tga h1v1: encoded JPEG byte-identical (1852 bytes)
+  [PASS] gradient.tga h1v1 linear: base decode succeeds
+  [PASS] gradient.tga h1v1 linear: cur decode succeeds
+  [PASS] gradient.tga h1v1 linear: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h1v1 box: base decode succeeds
+  [PASS] gradient.tga h1v1 box: cur decode succeeds
+  [PASS] gradient.tga h1v1 box: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h1v1 nosimd: base decode succeeds
+  [PASS] gradient.tga h1v1 nosimd: cur decode succeeds
+  [PASS] gradient.tga h1v1 nosimd: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h2v1: both encoders succeed
+  [PASS] gradient.tga h2v1: encoded JPEG byte-identical (1535 bytes)
+  [PASS] gradient.tga h2v1 linear: base decode succeeds
+  [PASS] gradient.tga h2v1 linear: cur decode succeeds
+  [PASS] gradient.tga h2v1 linear: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h2v1 box: base decode succeeds
+  [PASS] gradient.tga h2v1 box: cur decode succeeds
+  [PASS] gradient.tga h2v1 box: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h2v1 nosimd: base decode succeeds
+  [PASS] gradient.tga h2v1 nosimd: cur decode succeeds
+  [PASS] gradient.tga h2v1 nosimd: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h2v2: both encoders succeed
+  [PASS] gradient.tga h2v2: encoded JPEG byte-identical (1374 bytes)
+  [PASS] gradient.tga h2v2 linear: base decode succeeds
+  [PASS] gradient.tga h2v2 linear: cur decode succeeds
+  [PASS] gradient.tga h2v2 linear: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h2v2 box: base decode succeeds
+  [PASS] gradient.tga h2v2 box: cur decode succeeds
+  [PASS] gradient.tga h2v2 box: decoded pixels identical (max_err=0)
+  [PASS] gradient.tga h2v2 nosimd: base decode succeeds
+  [PASS] gradient.tga h2v2 nosimd: cur decode succeeds
+  [PASS] gradient.tga h2v2 nosimd: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h1v1: both encoders succeed
+  [PASS] colorbars.tga h1v1: encoded JPEG byte-identical (903 bytes)
+  [PASS] colorbars.tga h1v1 linear: base decode succeeds
+  [PASS] colorbars.tga h1v1 linear: cur decode succeeds
+  [PASS] colorbars.tga h1v1 linear: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h1v1 box: base decode succeeds
+  [PASS] colorbars.tga h1v1 box: cur decode succeeds
+  [PASS] colorbars.tga h1v1 box: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h1v1 nosimd: base decode succeeds
+  [PASS] colorbars.tga h1v1 nosimd: cur decode succeeds
+  [PASS] colorbars.tga h1v1 nosimd: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h2v1: both encoders succeed
+  [PASS] colorbars.tga h2v1: encoded JPEG byte-identical (871 bytes)
+  [PASS] colorbars.tga h2v1 linear: base decode succeeds
+  [PASS] colorbars.tga h2v1 linear: cur decode succeeds
+  [PASS] colorbars.tga h2v1 linear: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h2v1 box: base decode succeeds
+  [PASS] colorbars.tga h2v1 box: cur decode succeeds
+  [PASS] colorbars.tga h2v1 box: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h2v1 nosimd: base decode succeeds
+  [PASS] colorbars.tga h2v1 nosimd: cur decode succeeds
+  [PASS] colorbars.tga h2v1 nosimd: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h2v2: both encoders succeed
+  [PASS] colorbars.tga h2v2: encoded JPEG byte-identical (773 bytes)
+  [PASS] colorbars.tga h2v2 linear: base decode succeeds
+  [PASS] colorbars.tga h2v2 linear: cur decode succeeds
+  [PASS] colorbars.tga h2v2 linear: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h2v2 box: base decode succeeds
+  [PASS] colorbars.tga h2v2 box: cur decode succeeds
+  [PASS] colorbars.tga h2v2 box: decoded pixels identical (max_err=0)
+  [PASS] colorbars.tga h2v2 nosimd: base decode succeeds
+  [PASS] colorbars.tga h2v2 nosimd: cur decode succeeds
+  [PASS] colorbars.tga h2v2 nosimd: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h1v1: both encoders succeed
+  [PASS] oddsize.tga h1v1: encoded JPEG byte-identical (1759 bytes)
+  [PASS] oddsize.tga h1v1 linear: base decode succeeds
+  [PASS] oddsize.tga h1v1 linear: cur decode succeeds
+  [PASS] oddsize.tga h1v1 linear: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h1v1 box: base decode succeeds
+  [PASS] oddsize.tga h1v1 box: cur decode succeeds
+  [PASS] oddsize.tga h1v1 box: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h1v1 nosimd: base decode succeeds
+  [PASS] oddsize.tga h1v1 nosimd: cur decode succeeds
+  [PASS] oddsize.tga h1v1 nosimd: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h2v1: both encoders succeed
+  [PASS] oddsize.tga h2v1: encoded JPEG byte-identical (1614 bytes)
+  [PASS] oddsize.tga h2v1 linear: base decode succeeds
+  [PASS] oddsize.tga h2v1 linear: cur decode succeeds
+  [PASS] oddsize.tga h2v1 linear: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h2v1 box: base decode succeeds
+  [PASS] oddsize.tga h2v1 box: cur decode succeeds
+  [PASS] oddsize.tga h2v1 box: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h2v1 nosimd: base decode succeeds
+  [PASS] oddsize.tga h2v1 nosimd: cur decode succeeds
+  [PASS] oddsize.tga h2v1 nosimd: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h2v2: both encoders succeed
+  [PASS] oddsize.tga h2v2: encoded JPEG byte-identical (1466 bytes)
+  [PASS] oddsize.tga h2v2 linear: base decode succeeds
+  [PASS] oddsize.tga h2v2 linear: cur decode succeeds
+  [PASS] oddsize.tga h2v2 linear: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h2v2 box: base decode succeeds
+  [PASS] oddsize.tga h2v2 box: cur decode succeeds
+  [PASS] oddsize.tga h2v2 box: decoded pixels identical (max_err=0)
+  [PASS] oddsize.tga h2v2 nosimd: base decode succeeds
+  [PASS] oddsize.tga h2v2 nosimd: cur decode succeeds
+  [PASS] oddsize.tga h2v2 nosimd: decoded pixels identical (max_err=0)
+== B. H4V1 (4:1:1) chroma restoration ==
+  [PASS] gradient.tga: H4V1 encode succeeds
+  [PASS] gradient.tga: baseline binary rejects H4V1 stream
+  [PASS] gradient.tga box: jpgd and stb decode succeed
+  [info] gradient.tga box: jpgd vs stb max_err=3 rmse=0.29
+  [PASS] gradient.tga box: matches stb nearest-neighbor reference (rmse<1, max<=4)
+  [PASS] gradient.tga linear: jpgd triangular decode succeeds
+  [PASS] colorbars.tga: H4V1 encode succeeds
+  [PASS] colorbars.tga: baseline binary rejects H4V1 stream
+  [PASS] colorbars.tga box: jpgd and stb decode succeed
+  [info] colorbars.tga box: jpgd vs stb max_err=2 rmse=0.21
+  [PASS] colorbars.tga box: matches stb nearest-neighbor reference (rmse<1, max<=4)
+  [PASS] colorbars.tga linear: jpgd triangular decode succeeds
+  [PASS] oddsize.tga: H4V1 encode succeeds
+  [PASS] oddsize.tga: baseline binary rejects H4V1 stream
+  [PASS] oddsize.tga box: jpgd and stb decode succeed
+  [info] oddsize.tga box: jpgd vs stb max_err=3 rmse=0.34
+  [PASS] oddsize.tga box: matches stb nearest-neighbor reference (rmse<1, max<=4)
+  [PASS] oddsize.tga linear: jpgd triangular decode succeeds
+  [PASS] linear: interior stripe hues match source (correct chroma restoration)
+  [PASS] linear: interpolation confined to chroma boundaries (no wide smearing)
+== C. Repo exhaustive legacy test (-x) ==
+  [PASS] exhaustive compression test passes (last line: Success.)
+
+ALL VERIFICATION CHECKS PASSED

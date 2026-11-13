@@ -1,0 +1,3 @@
+{"version": 2, "width": 100, "height": 30, "timestamp": 1794555089, "idle_time_limit": 2.0, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "段2-校验SOF采样系数"}
+[0.010633, "o", "\r\n\u001b[1;36m================================================================\r\n  段 2/4：校验 SOF 采样系数 (Y=4x1, Cb/Cr=1x1)\r\n================================================================\u001b[0m\r\n"]
+[1.021015, "o", "SOF 0xC0 components=3\r\n  comp 0: id=1 H=4 V=1\r\n  comp 1: id=2 H=1 V=1\r\n  comp 2: id=3 H=1 V=1\r\n"]

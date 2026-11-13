@@ -1,5 +1,5 @@
 // jpge.cpp - C++ class for JPEG compression. Richard Geldreich <richgel99@gmail.com>
-// Supports grayscale, H1V1, H2V1, and H2V2 chroma subsampling factors, one or two pass Huffman table optimization, libjpeg-style quality 1-100 quality factors.
+// Supports grayscale, H1V1, H2V1, H2V2, and H4V1 (4:1:1) chroma subsampling factors, one or two pass Huffman table optimization, libjpeg-style quality 1-100 quality factors.
 // Also supports using luma quantization tables for chroma.
 //
 // Released under two licenses. You are free to choose which license you want:
@@ -502,6 +502,16 @@ namespace jpge {
 			m_comp_h_samp[1] = 1; m_comp_v_samp[1] = 1;
 			m_comp_h_samp[2] = 1; m_comp_v_samp[2] = 1;
 			m_mcu_x = 16; m_mcu_y = 16;
+			break;
+		}
+		case H4V1:
+		{
+			// 4:1:1: luma spans 32 source pixels horizontally, chroma is 4x subsampled.
+			m_comp_h_samp[0] = 4; m_comp_v_samp[0] = 1;
+			m_comp_h_samp[1] = 1; m_comp_v_samp[1] = 1;
+			m_comp_h_samp[2] = 1; m_comp_v_samp[2] = 1;
+			m_mcu_x = 32; m_mcu_y = 8;
+			break;
 		}
 		}
 
@@ -603,6 +613,24 @@ namespace jpge {
 			pDst[2] = ((pSrc1[4 * 3] + pSrc1[5 * 3] + 1) >> 1) - 128; pDst[3] = ((pSrc1[6 * 3] + pSrc1[7 * 3] + 1) >> 1) - 128;
 			pDst[4] = ((pSrc1[8 * 3] + pSrc1[9 * 3] + 1) >> 1) - 128; pDst[5] = ((pSrc1[10 * 3] + pSrc1[11 * 3] + 1) >> 1) - 128;
 			pDst[6] = ((pSrc1[12 * 3] + pSrc1[13 * 3] + 1) >> 1) - 128; pDst[7] = ((pSrc1[14 * 3] + pSrc1[15 * 3] + 1) >> 1) - 128;
+		}
+	}
+
+	// H4V1 (4:1:1) chroma downsampling: average each run of 4 horizontally adjacent
+	// component samples into one. Same averaging convention as load_block_16_8_8().
+	void jpeg_encoder::load_block_32_8_8(int x, int c)
+	{
+		uint8* pSrc1;
+		sample_array_t* pDst = m_sample_array;
+		x = (x * (32 * 3)) + c;
+		for (int i = 0; i < 8; i++, pDst += 8)
+		{
+			pSrc1 = m_mcu_lines[i + 0] + x;
+			for (int j = 0; j < 8; j++)
+			{
+				const int ofs = j * 4 * 3;
+				pDst[j] = ((pSrc1[ofs + 0 * 3] + pSrc1[ofs + 1 * 3] + pSrc1[ofs + 2 * 3] + pSrc1[ofs + 3 * 3] + 2) >> 2) - 128;
+			}
 		}
 	}
 
@@ -797,6 +825,16 @@ namespace jpge {
 				load_block_8_8(i * 2 + 0, 0, 0); code_block(0); load_block_8_8(i * 2 + 1, 0, 0); code_block(0);
 				load_block_8_8(i * 2 + 0, 1, 0); code_block(0); load_block_8_8(i * 2 + 1, 1, 0); code_block(0);
 				load_block_16_8(i, 1); code_block(1); load_block_16_8(i, 2); code_block(2);
+			}
+		}
+		else if ((m_comp_h_samp[0] == 4) && (m_comp_v_samp[0] == 1))
+		{
+			// H4V1: four 8x8 luma blocks, one 8x8 Cb and one 8x8 Cr block per MCU.
+			for (int i = 0; i < m_mcus_per_row; i++)
+			{
+				load_block_8_8(i * 4 + 0, 0, 0); code_block(0); load_block_8_8(i * 4 + 1, 0, 0); code_block(0);
+				load_block_8_8(i * 4 + 2, 0, 0); code_block(0); load_block_8_8(i * 4 + 3, 0, 0); code_block(0);
+				load_block_32_8_8(i, 1); code_block(1); load_block_32_8_8(i, 2); code_block(2);
 			}
 		}
 	}
