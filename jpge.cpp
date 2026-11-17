@@ -43,7 +43,7 @@ namespace jpge {
 	static inline void jpge_free(void* p) { free(p); }
 
 	// Various JPEG enums and tables.
-	enum { M_SOF0 = 0xC0, M_DHT = 0xC4, M_SOI = 0xD8, M_EOI = 0xD9, M_SOS = 0xDA, M_DQT = 0xDB, M_APP0 = 0xE0 };
+	enum { M_SOF0 = 0xC0, M_DHT = 0xC4, M_SOI = 0xD8, M_EOI = 0xD9, M_SOS = 0xDA, M_DQT = 0xDB, M_APP0 = 0xE0, M_APP1 = 0xE1 };
 	enum { DC_LUM_CODES = 12, AC_LUM_CODES = 256, DC_CHROMA_CODES = 12, AC_CHROMA_CODES = 256, MAX_HUFF_SYMBOLS = 257, MAX_HUFF_CODESIZE = 32 };
 
 	static uint8 s_zag[64] = { 0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63 };
@@ -81,6 +81,226 @@ namespace jpge {
 
 	// Low-level helper functions.
 	template <class T> inline void clear_obj(T& obj) { memset(&obj, 0, sizeof(obj)); }
+
+	const char* exif_status_name(exif_status status)
+	{
+		switch (status)
+		{
+		case EXIF_OK: return "EXIF_OK";
+		case EXIF_ERR_NOT_FOUND: return "EXIF_ERR_NOT_FOUND";
+		case EXIF_ERR_BAD_SEGMENT_LENGTH: return "EXIF_ERR_BAD_SEGMENT_LENGTH";
+		case EXIF_ERR_TOO_LARGE: return "EXIF_ERR_TOO_LARGE";
+		case EXIF_ERR_DUPLICATE_APP1: return "EXIF_ERR_DUPLICATE_APP1";
+		case EXIF_ERR_BAD_TIFF_HEADER: return "EXIF_ERR_BAD_TIFF_HEADER";
+		case EXIF_ERR_BAD_IFD: return "EXIF_ERR_BAD_IFD";
+		case EXIF_ERR_ORIENTATION_RANGE: return "EXIF_ERR_ORIENTATION_RANGE";
+		case EXIF_ERR_CONFLICT: return "EXIF_ERR_CONFLICT";
+		}
+		return "EXIF_ERR_UNKNOWN";
+	}
+
+	static inline uint exif_get_u16(const uint8* p, bool big_endian)
+	{
+		return big_endian ? ((uint)p[0] << 8) | p[1] : ((uint)p[1] << 8) | p[0];
+	}
+
+	static inline uint32 exif_get_u32(const uint8* p, bool big_endian)
+	{
+		return big_endian ? ((uint32)p[0] << 24) | ((uint32)p[1] << 16) | ((uint32)p[2] << 8) | p[3]
+		                  : ((uint32)p[3] << 24) | ((uint32)p[2] << 16) | ((uint32)p[1] << 8) | p[0];
+	}
+
+	static const uint EXIF_PREFIX_SIZE = 6;  // "Exif\0\0"
+	static const uint EXIF_TIFF_HEADER_SIZE = 8;  // byte order + magic + IFD0 offset
+	static const uint EXIF_IFD_ENTRY_SIZE = 12;
+	static const uint EXIF_ORIENTATION_TAG = 0x0112;
+	static const uint EXIF_TYPE_SHORT = 3;
+
+	// Validates an EXIF APP1 payload (with the "Exif\0\0" prefix) and locates its
+	// IFD0. Does not require an Orientation tag. On success, pInfo is filled in
+	// and *pp_ifd points at the start of the IFD entry array inside pData.
+	static exif_status exif_parse_payload(const uint8* pData, uint size, exif_info& info, const uint8** pp_ifd)
+	{
+		if (size > EXIF_MAX_APP1_PAYLOAD)
+			return EXIF_ERR_TOO_LARGE;
+
+		*pp_ifd = NULL;
+		info = exif_info();
+		info.payload_size = size;
+
+		if ((size < EXIF_PREFIX_SIZE + EXIF_TIFF_HEADER_SIZE) || memcmp(pData, "Exif\0\0", EXIF_PREFIX_SIZE) != 0)
+			return EXIF_ERR_BAD_TIFF_HEADER;
+
+		const uint8* pTiff = pData + EXIF_PREFIX_SIZE;
+		const uint tiff_size = size - EXIF_PREFIX_SIZE;
+
+		if ((pTiff[0] == 'I') && (pTiff[1] == 'I'))
+			info.big_endian = false;
+		else if ((pTiff[0] == 'M') && (pTiff[1] == 'M'))
+			info.big_endian = true;
+		else
+			return EXIF_ERR_BAD_TIFF_HEADER;
+
+		if (exif_get_u16(pTiff + 2, info.big_endian) != 42)
+			return EXIF_ERR_BAD_TIFF_HEADER;
+
+		// IFD0 offset is relative to the TIFF header. It must leave room for the
+		// 2-byte entry count, and every entry plus the following 4-byte next-IFD
+		// offset must stay inside the payload.
+		const uint32 ifd_ofs = exif_get_u32(pTiff + 4, info.big_endian);
+		if ((ifd_ofs < EXIF_TIFF_HEADER_SIZE) || (ifd_ofs > tiff_size) || ((tiff_size - ifd_ofs) < 2))
+			return EXIF_ERR_BAD_IFD;
+
+		const uint8* pIfd = pTiff + ifd_ofs;
+		const uint num_entries = exif_get_u16(pIfd, info.big_endian);
+		const uint remaining = tiff_size - ifd_ofs - 2;
+		// An IFD is the 2-byte count, 12 bytes per entry, then a 4-byte next-IFD offset.
+		if ((remaining < 4) || (num_entries > ((remaining - 4) / EXIF_IFD_ENTRY_SIZE)))
+			return EXIF_ERR_BAD_IFD;
+
+		*pp_ifd = pIfd;
+		return EXIF_OK;
+	}
+
+	// Finds the Orientation tag in the IFD located by exif_parse_payload().
+	// Sets info.orientation to 1..8, or leaves it 0 when the tag is absent.
+	static exif_status exif_find_orientation(const uint8* pIfd, exif_info& info)
+	{
+		const uint num_entries = exif_get_u16(pIfd, info.big_endian);
+		const uint8* pEntry = pIfd + 2;
+		for (uint i = 0; i < num_entries; i++, pEntry += EXIF_IFD_ENTRY_SIZE)
+		{
+			if (exif_get_u16(pEntry, info.big_endian) != EXIF_ORIENTATION_TAG)
+				continue;
+
+			const uint type = exif_get_u16(pEntry + 2, info.big_endian);
+			const uint32 count = exif_get_u32(pEntry + 4, info.big_endian);
+			if ((type != EXIF_TYPE_SHORT) || (count != 1))
+				return EXIF_ERR_BAD_IFD;
+
+			// A SHORT value is left-justified in the 4-byte value field.
+			const uint value = exif_get_u16(pEntry + 8, info.big_endian);
+			if ((value < 1) || (value > 8))
+				return EXIF_ERR_ORIENTATION_RANGE;
+
+			info.orientation = static_cast<int>(value);
+			return EXIF_OK;
+		}
+		return EXIF_OK;
+	}
+
+	exif_status read_exif(const void* pJpeg_data, uint jpeg_size, exif_info& info)
+	{
+		info = exif_info();
+
+		const uint8* pData = static_cast<const uint8*>(pJpeg_data);
+		if ((!pData) || (jpeg_size < 2))
+			return EXIF_ERR_NOT_FOUND;
+		if ((pData[0] != 0xFF) || (pData[1] != M_SOI))
+			return EXIF_ERR_NOT_FOUND;
+
+		bool found = false;
+		uint found_ofs = 0, found_len = 0;
+
+		// Walk the marker chain until SOS/EOI. Entropy-coded data cannot appear
+		// before SOS, so every marker here carries a length field.
+		uint ofs = 2;
+		while (ofs + 1 < jpeg_size)
+		{
+			if (pData[ofs] != 0xFF)
+				return EXIF_ERR_NOT_FOUND; // desynchronized stream: stop looking
+			const uint marker = pData[ofs + 1];
+			if (marker == 0xFF) { ofs++; continue; }      // fill byte
+			if (marker == M_SOI) { ofs += 2; continue; }  // stray SOI
+			if ((marker == M_EOI) || (marker == M_SOS))
+				break;
+			// Standalone markers (TEM, RSTn) have no length field.
+			if ((marker == 0x01) || ((marker >= 0xD0) && (marker <= 0xD7))) { ofs += 2; continue; }
+
+			if (ofs + 3 >= jpeg_size)
+				return EXIF_ERR_BAD_SEGMENT_LENGTH;
+			const uint seg_len = ((uint)pData[ofs + 2] << 8) | pData[ofs + 3];
+			if ((seg_len < 2) || (seg_len > (jpeg_size - ofs - 2)))
+				return EXIF_ERR_BAD_SEGMENT_LENGTH;
+
+			if (marker == M_APP0)
+			{
+				// JFIF is not EXIF; ignore it explicitly for clarity.
+			}
+			else if (marker == M_APP1)
+			{
+				const uint payload_size = seg_len - 2;
+				if ((payload_size >= EXIF_PREFIX_SIZE) && (memcmp(pData + ofs + 4, "Exif\0\0", EXIF_PREFIX_SIZE) == 0))
+				{
+					if (found)
+						return EXIF_ERR_DUPLICATE_APP1;
+					found = true;
+					found_ofs = ofs + 4;
+					found_len = payload_size;
+				}
+			}
+			ofs += 2 + seg_len;
+		}
+
+		if (!found)
+			return EXIF_ERR_NOT_FOUND;
+
+		info.segment_length = found_len + 2;
+		exif_info parsed;
+		const uint8* pIfd = NULL;
+		const exif_status status = exif_parse_payload(pData + found_ofs, found_len, parsed, &pIfd);
+		if (status != EXIF_OK)
+			return status;
+		const exif_status orient_status = exif_find_orientation(pIfd, parsed);
+		if (orient_status != EXIF_OK)
+			return orient_status;
+		parsed.segment_length = info.segment_length;
+		info = parsed;
+		return EXIF_OK;
+	}
+
+	exif_status params::check_exif() const
+	{
+		if ((m_exif_orientation < 0) || (m_exif_orientation > 8))
+			return EXIF_ERR_ORIENTATION_RANGE;
+		if (m_exif_data_size > EXIF_MAX_APP1_PAYLOAD)
+			return EXIF_ERR_TOO_LARGE;
+		if ((m_exif_data_size) && (!m_pExif_data))
+			return EXIF_ERR_BAD_TIFF_HEADER;
+		if ((m_exif_data_size) && (m_exif_orientation))
+			return EXIF_ERR_CONFLICT;
+		if (m_exif_data_size)
+		{
+			exif_info info;
+			const uint8* pIfd;
+			const exif_status status = exif_parse_payload(m_pExif_data, m_exif_data_size, info, &pIfd);
+			if (status != EXIF_OK)
+				return status;
+			return exif_find_orientation(pIfd, info);
+		}
+		return EXIF_OK;
+	}
+
+	// Builds a minimal little-endian EXIF payload holding only the Orientation
+	// tag: "Exif\0\0", TIFF header, one IFD entry, no next IFD.
+	// Layout: 6 prefix + 8 header + 2 count + 12 entry + 4 next-IFD = 32 bytes.
+	static const uint EXIF_GENERATED_PAYLOAD_SIZE = 32;
+
+	static void exif_build_orientation(uint8* pDst, int orientation)
+	{
+		uint8* p = pDst;
+		memcpy(p, "Exif\0\0", EXIF_PREFIX_SIZE); p += EXIF_PREFIX_SIZE;
+		*p++ = 'I'; *p++ = 'I';          // little endian
+		*p++ = 42; *p++ = 0;             // TIFF magic (LE)
+		*p++ = EXIF_TIFF_HEADER_SIZE; *p++ = 0; *p++ = 0; *p++ = 0;  // IFD0 at offset 8
+		*p++ = 1; *p++ = 0;              // 1 entry (LE)
+		*p++ = (uint8)(EXIF_ORIENTATION_TAG & 0xFF); *p++ = (uint8)(EXIF_ORIENTATION_TAG >> 8);
+		*p++ = EXIF_TYPE_SHORT; *p++ = 0;
+		*p++ = 1; *p++ = 0; *p++ = 0; *p++ = 0;      // count = 1
+		*p++ = (uint8)(orientation & 0xFF); *p++ = 0; // value (SHORT, left-justified)
+		*p++ = 0; *p++ = 0;
+		*p++ = 0; *p++ = 0; *p++ = 0; *p++ = 0;      // next IFD offset = 0
+	}
 
 	const int YR = 19595, YG = 38470, YB = 7471, CB_R = -11059, CB_G = -21709, CB_B = 32768, CR_R = 32768, CR_G = -27439, CR_B = -5329;
 	static inline uint8 clamp(int i) { if (static_cast<uint>(i) > 255U) { if (i < 0) i = 0; else if (i > 255) i = 255; } return static_cast<uint8>(i); }
@@ -304,6 +524,30 @@ namespace jpge {
 		emit_byte(0);
 	}
 
+	// Emit an EXIF APP1 segment. No-op when the caller didn't request EXIF, which
+	// keeps the output byte-for-byte identical to previous versions.
+	void jpeg_encoder::emit_exif_app1()
+	{
+		if (m_params.m_exif_data_size)
+		{
+			// Emit the caller's validated payload verbatim.
+			emit_marker(M_APP1);
+			emit_word(2 + m_params.m_exif_data_size);
+			for (uint i = 0; i < m_params.m_exif_data_size; i++)
+				emit_byte(m_params.m_pExif_data[i]);
+		}
+		else if (m_params.m_exif_orientation)
+		{
+			// Synthesize a minimal TIFF block with a single Orientation entry.
+			uint8 payload[EXIF_GENERATED_PAYLOAD_SIZE];
+			exif_build_orientation(payload, m_params.m_exif_orientation);
+			emit_marker(M_APP1);
+			emit_word(2 + EXIF_GENERATED_PAYLOAD_SIZE);
+			for (uint i = 0; i < EXIF_GENERATED_PAYLOAD_SIZE; i++)
+				emit_byte(payload[i]);
+		}
+	}
+
 	// Emit quantization tables
 	void jpeg_encoder::emit_dqt()
 	{
@@ -389,6 +633,7 @@ namespace jpge {
 	{
 		emit_marker(M_SOI);
 		emit_jfif_app0();
+		emit_exif_app1();
 		emit_dqt();
 		emit_sof();
 		emit_dhts();

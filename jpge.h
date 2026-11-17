@@ -16,17 +16,68 @@ namespace jpge
 	// JPEG chroma subsampling factors. Y_ONLY (grayscale images) and H2V2 (color images) are the most common.
 	enum subsampling_t { Y_ONLY = 0, H1V1 = 1, H2V1 = 2, H2V2 = 3 };
 
+	// EXIF APP1 validation results. Zero means "OK" (or no EXIF requested).
+	// The distinct errors let callers tell an oversized segment apart from a
+	// malformed TIFF header before any JPEG bytes are produced.
+	enum exif_status
+	{
+		EXIF_OK = 0,
+		EXIF_ERR_NOT_FOUND,          // no Exif APP1 segment in the stream
+		EXIF_ERR_BAD_SEGMENT_LENGTH, // APP1 length field < 2 or runs past end of data
+		EXIF_ERR_TOO_LARGE,          // payload exceeds EXIF_MAX_APP1_PAYLOAD
+		EXIF_ERR_DUPLICATE_APP1,     // more than one Exif APP1 segment
+		EXIF_ERR_BAD_TIFF_HEADER,    // not "Exif\0\0" + II/MM, magic 42, sane IFD offset
+		EXIF_ERR_BAD_IFD,            // IFD entry array or value offset outside the payload
+		EXIF_ERR_ORIENTATION_RANGE,  // Orientation value is not in 1..8
+		EXIF_ERR_CONFLICT            // raw payload and m_exif_orientation both supplied
+	};
+
+	// Human-readable name for an exif_status value (stable for logging/tests).
+	const char* exif_status_name(exif_status status);
+
+	// Maximum EXIF payload that fits in one APP1 segment: the 16-bit segment
+	// length includes its own 2 bytes, so the payload tops out at 65533.
+	static const uint EXIF_MAX_APP1_PAYLOAD = 65533;
+
+	// Decoded EXIF orientation state.
+	struct exif_info
+	{
+		inline exif_info() : orientation(0), big_endian(false), segment_length(0), payload_size(0) { }
+
+		// Orientation tag value 1..8, or 0 if the EXIF block has no such tag.
+		int orientation;
+		// TIFF byte order: true = big endian ("MM"), false = little endian ("II").
+		bool big_endian;
+		// APP1 segment length field this Exif block came from (payload + 2).
+		uint segment_length;
+		// APP1 payload size, including the 6-byte "Exif\0\0" prefix.
+		uint payload_size;
+	};
+
+	// Reads the first Exif APP1 segment of a JPEG stream and extracts Orientation.
+	// Segments are located by walking the marker chain up to the first SOS or EOI.
+	// Returns EXIF_OK when a well-formed EXIF block was found (whether or not it
+	// carries an Orientation tag); otherwise a distinct exif_status value.
+	exif_status read_exif(const void* pJpeg_data, uint jpeg_size, exif_info& info);
+
 	// JPEG compression parameters structure.
 	struct params
 	{
-		inline params() : m_quality(85), m_subsampling(H2V2), m_no_chroma_discrim_flag(false), m_two_pass_flag(false), m_use_std_tables(false) { }
+		inline params() : m_quality(85), m_subsampling(H2V2), m_no_chroma_discrim_flag(false), m_two_pass_flag(false), m_use_std_tables(false),
+			m_exif_orientation(0), m_pExif_data(0), m_exif_data_size(0) { }
 
 		inline bool check() const
 		{
 			if ((m_quality < 1) || (m_quality > 100)) return false;
 			if ((uint)m_subsampling > (uint)H2V2) return false;
+			if (check_exif() != EXIF_OK) return false;
 			return true;
 		}
+
+		// Validates the EXIF options without touching the JPEG stream. Returns one
+		// of the exif_status values so oversized, malformed-TIFF and conflicting
+		// requests can be reported separately.
+		exif_status check_exif() const;
 
 		// Quality: 1-100, higher is better. Typical values are around 50-95.
 		int m_quality;
@@ -44,9 +95,25 @@ namespace jpge
 
 		bool m_two_pass_flag;
 
-		// By default we use the same quantization tables as mozjpeg's default. 
+		// By default we use the same quantization tables as mozjpeg's default.
 		// Set to true to use the traditional tables from JPEG Annex K.
 		bool m_use_std_tables;
+
+		// EXIF Orientation tag (1-8, see EXIF/TIFF Orientation). 0 (the default)
+		// means "no orientation tag". Setting 1-8 makes the encoder synthesize a
+		// minimal little-endian EXIF APP1 segment containing just this tag. The
+		// output is byte-for-byte unchanged when both EXIF fields are left at their
+		// defaults.
+		int m_exif_orientation;
+
+		// Optional raw EXIF APP1 payload, starting with "Exif\0\0" followed by a
+		// TIFF header (II*\0 or MM\0*, big or little endian). The payload is
+		// written verbatim, so extra IFDs and thumbnail data survive. The encoder
+		// validates the TIFF header and the APP1 length limit. Its size must not
+		// exceed EXIF_MAX_APP1_PAYLOAD. May not be combined with
+		// m_exif_orientation (use the payload's own Orientation tag instead).
+		const uint8* m_pExif_data;
+		uint m_exif_data_size;
 	};
 
 	// Writes JPEG image to a file. 
@@ -137,6 +204,7 @@ namespace jpge
 		void emit_word(uint i);
 		void emit_marker(int marker);
 		void emit_jfif_app0();
+		void emit_exif_app1();
 		void emit_dqt();
 		void emit_sof();
 		void emit_dht(uint8* bits, uint8* val, int index, bool ac_flag);

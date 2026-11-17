@@ -61,5 +61,11 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/${BIN_DIRECTORY})
 
 add_executable(jpge ${BASISU_SRC_LIST})
 
+add_executable(codec_test
+	jpgd.cpp
+	jpge.cpp
+	codec_test.cpp
+	)
+
 install(TARGETS jpge DESTINATION bin)
 

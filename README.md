@@ -65,6 +65,26 @@ Where quality_factor ranges from 1-100 (higher is better).
 
 jpge.exe also includes a few other modes for exhaustive testing of the codec (-x option) and JPEG to TGA decompression (-d option) -- see the help text for more info.
 
+A separate `codec_test` target exercises the codec directly. `codec_test` runs a basic encode/decode sanity check; `codec_test --exif` runs the EXIF APP1 suite (byte-identical EXIF-free output, Orientation 1-8 write/read, raw II/MM payloads, and the distinct EXIF error classes).
+
+## EXIF (Orientation)
+
+`jpge::params` can write an EXIF APP1 segment right after the JFIF APP0 marker:
+
+``` cpp
+// Synthesize a minimal EXIF block carrying only the Orientation tag (1-8).
+jpge::params params;
+params.m_exif_orientation = 6;
+
+// Or write a caller-supplied EXIF payload (starting with "Exif\0\0") verbatim:
+params.m_pExif_data = pExifPayload;       // must begin with "Exif\0\0" + TIFF header
+params.m_exif_data_size = exif_payload_size;  // <= jpge::EXIF_MAX_APP1_PAYLOAD (65533)
+```
+
+Both fields default to "off", and the output is then byte-for-byte identical to previous releases. `params::check_exif()` validates the options before encoding and returns one of the `jpge::exif_status` values (`EXIF_ERR_TOO_LARGE`, `EXIF_ERR_BAD_TIFF_HEADER`, `EXIF_ERR_BAD_IFD`, `EXIF_ERR_ORIENTATION_RANGE`, `EXIF_ERR_CONFLICT`); `params::check()` rejects any non-`EXIF_OK` value.
+
+To read EXIF back, `jpge::read_exif()` walks the marker chain up to SOS/EOI and extracts the Orientation tag, reporting the TIFF byte order and the segment length. It distinguishes a missing segment (`EXIF_ERR_NOT_FOUND`, the common case for JPEGs without EXIF), an oversized APP1 (`EXIF_ERR_TOO_LARGE`), a malformed segment length (`EXIF_ERR_BAD_SEGMENT_LENGTH`), duplicate Exif APP1 segments (`EXIF_ERR_DUPLICATE_APP1`), an illegal TIFF header (`EXIF_ERR_BAD_TIFF_HEADER`), a bad IFD (`EXIF_ERR_BAD_IFD`) and an out-of-range Orientation (`EXIF_ERR_ORIENTATION_RANGE`).
+
 ## Licenses
 
 The license of jpgd.cpp/.h and jpge.cpp/.h is either Public Domain or Apache 2.0. Choose whatever you want.
