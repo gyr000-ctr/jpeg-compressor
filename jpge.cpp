@@ -43,7 +43,7 @@ namespace jpge {
 	static inline void jpge_free(void* p) { free(p); }
 
 	// Various JPEG enums and tables.
-	enum { M_SOF0 = 0xC0, M_DHT = 0xC4, M_SOI = 0xD8, M_EOI = 0xD9, M_SOS = 0xDA, M_DQT = 0xDB, M_APP0 = 0xE0 };
+	enum { M_RST0 = 0xD0, M_SOF0 = 0xC0, M_DHT = 0xC4, M_SOI = 0xD8, M_EOI = 0xD9, M_SOS = 0xDA, M_DQT = 0xDB, M_DRI = 0xDD, M_APP0 = 0xE0 };
 	enum { DC_LUM_CODES = 12, AC_LUM_CODES = 256, DC_CHROMA_CODES = 12, AC_CHROMA_CODES = 256, MAX_HUFF_SYMBOLS = 257, MAX_HUFF_CODESIZE = 32 };
 
 	static uint8 s_zag[64] = { 0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63 };
@@ -317,6 +317,43 @@ namespace jpge {
 		}
 	}
 
+	// Emit define restart interval marker
+	void jpeg_encoder::emit_dri()
+	{
+		emit_marker(M_DRI);
+		emit_word(4);
+		emit_word(m_params.m_restart_interval);
+	}
+
+	// Emit a restart marker: pad the entropy-coded segment with 1-bits to a byte
+	// boundary, flush it to the stream, emit RSTn, and reset the DC predictors.
+	void jpeg_encoder::emit_restart_marker()
+	{
+		if (m_bits_in)
+			put_bits((1U << (8 - m_bits_in)) - 1, 8 - m_bits_in);
+		flush_output_buffer();
+		emit_marker(M_RST0 + m_next_restart_num);
+		m_next_restart_num = (m_next_restart_num + 1) & 7;
+		memset(m_last_dc_val, 0, sizeof(m_last_dc_val));
+	}
+
+	// Called before coding each MCU. Emits a restart marker (pass 2) or just resets
+	// the DC predictors (pass 1, statistics only) whenever the interval elapses.
+	void jpeg_encoder::process_restart_interval()
+	{
+		if (!m_params.m_restart_interval)
+			return;
+		if (m_mcus_until_restart == 0)
+		{
+			if (m_pass_num == 2)
+				emit_restart_marker();
+			else
+				memset(m_last_dc_val, 0, sizeof(m_last_dc_val));
+			m_mcus_until_restart = m_params.m_restart_interval;
+		}
+		m_mcus_until_restart--;
+	}
+
 	// Emit start of frame marker
 	void jpeg_encoder::emit_sof()
 	{
@@ -392,6 +429,8 @@ namespace jpge {
 		emit_dqt();
 		emit_sof();
 		emit_dhts();
+		if (m_params.m_restart_interval)
+			emit_dri();
 		emit_sos();
 	}
 
@@ -450,6 +489,8 @@ namespace jpge {
 		m_bit_buffer = 0; m_bits_in = 0;
 		memset(m_last_dc_val, 0, 3 * sizeof(m_last_dc_val[0]));
 		m_mcu_y_ofs = 0;
+		m_mcus_until_restart = m_params.m_restart_interval;
+		m_next_restart_num = 0;
 		m_pass_num = 1;
 	}
 
@@ -772,6 +813,7 @@ namespace jpge {
 		{
 			for (int i = 0; i < m_mcus_per_row; i++)
 			{
+				process_restart_interval();
 				load_block_8_8_grey(i); code_block(0);
 			}
 		}
@@ -779,6 +821,7 @@ namespace jpge {
 		{
 			for (int i = 0; i < m_mcus_per_row; i++)
 			{
+				process_restart_interval();
 				load_block_8_8(i, 0, 0); code_block(0); load_block_8_8(i, 0, 1); code_block(1); load_block_8_8(i, 0, 2); code_block(2);
 			}
 		}
@@ -786,6 +829,7 @@ namespace jpge {
 		{
 			for (int i = 0; i < m_mcus_per_row; i++)
 			{
+				process_restart_interval();
 				load_block_8_8(i * 2 + 0, 0, 0); code_block(0); load_block_8_8(i * 2 + 1, 0, 0); code_block(0);
 				load_block_16_8_8(i, 1); code_block(1); load_block_16_8_8(i, 2); code_block(2);
 			}
@@ -794,6 +838,7 @@ namespace jpge {
 		{
 			for (int i = 0; i < m_mcus_per_row; i++)
 			{
+				process_restart_interval();
 				load_block_8_8(i * 2 + 0, 0, 0); code_block(0); load_block_8_8(i * 2 + 1, 0, 0); code_block(0);
 				load_block_8_8(i * 2 + 0, 1, 0); code_block(0); load_block_8_8(i * 2 + 1, 1, 0); code_block(0);
 				load_block_16_8(i, 1); code_block(1); load_block_16_8(i, 2); code_block(2);

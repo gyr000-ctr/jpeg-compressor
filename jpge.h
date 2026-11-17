@@ -19,12 +19,13 @@ namespace jpge
 	// JPEG compression parameters structure.
 	struct params
 	{
-		inline params() : m_quality(85), m_subsampling(H2V2), m_no_chroma_discrim_flag(false), m_two_pass_flag(false), m_use_std_tables(false) { }
+		inline params() : m_quality(85), m_subsampling(H2V2), m_no_chroma_discrim_flag(false), m_two_pass_flag(false), m_use_std_tables(false), m_restart_interval(0) { }
 
 		inline bool check() const
 		{
 			if ((m_quality < 1) || (m_quality > 100)) return false;
 			if ((uint)m_subsampling > (uint)H2V2) return false;
+			if ((m_restart_interval < 0) || (m_restart_interval > 65535)) return false;
 			return true;
 		}
 
@@ -44,9 +45,16 @@ namespace jpge
 
 		bool m_two_pass_flag;
 
-		// By default we use the same quantization tables as mozjpeg's default. 
+		// By default we use the same quantization tables as mozjpeg's default.
 		// Set to true to use the traditional tables from JPEG Annex K.
 		bool m_use_std_tables;
+
+		// Restart interval, in MCUs. 0 (the default) disables restart markers, and the
+		// output bitstream is identical to previous versions. When non-zero, a DRI
+		// marker is written to the header and an RSTn marker is emitted after every
+		// m_restart_interval MCUs, limiting how much of the image is lost if the
+		// entropy-coded data is corrupted. Valid range: 0-65535.
+		int m_restart_interval;
 	};
 
 	// Writes JPEG image to a file. 
@@ -129,6 +137,8 @@ namespace jpge
 		uint m_out_buf_left;
 		uint32 m_bit_buffer;
 		uint m_bits_in;
+		int m_mcus_until_restart;
+		uint m_next_restart_num;
 		uint8 m_pass_num;
 		bool m_all_stream_writes_succeeded;
 
@@ -138,6 +148,9 @@ namespace jpge
 		void emit_marker(int marker);
 		void emit_jfif_app0();
 		void emit_dqt();
+		void emit_dri();
+		void emit_restart_marker();
+		void process_restart_interval();
 		void emit_sof();
 		void emit_dht(uint8* bits, uint8* val, int index, bool ac_flag);
 		void emit_dhts();
